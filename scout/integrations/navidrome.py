@@ -54,32 +54,34 @@ class NavidromeScanner:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
+            music_dir = Path.home() / "Müzik"
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM annotation a
                 JOIN media_file mf ON a.item_id = mf.id
-                WHERE a.starred = 1
+                WHERE a.starred = 1 AND (mf.missing IS NULL OR mf.missing = 0)
                 ORDER BY a.starred_at DESC
             """
             cursor.execute(query)
             rows = cursor.fetchall()
             for r in rows:
-                tracks.append(
-                    Track(
-                        title=r["title"],
-                        artist=r["artist"],
-                        album=r["album"],
-                        track_num=r["track_number"] or 1,
-                        duration_seconds=int(r["duration"] or 0),
-                        year=str(r["year"] or ""),
+                # Verify physical existence on disk
+                rel_path = r["path"]
+                if (music_dir / rel_path).exists():
+                    tracks.append(
+                        Track(
+                            title=r["title"],
+                            artist=r["artist"],
+                            album=r["album"],
+                            track_num=r["track_number"] or 1,
+                            duration_seconds=int(r["duration"] or 0),
+                            year=str(r["year"] or ""),
+                        )
                     )
-                )
             conn.close()
         except Exception:
             pass
-
         return tracks
-
     def get_recently_played_tracks(self, db_path: Optional[Path] = None, limit: int = 20) -> list[Track]:
         """Read recently played tracks directly from Navidrome SQLite DB."""
         target_db = db_path or self.config.get_expanded_db_path()
@@ -92,31 +94,34 @@ class NavidromeScanner:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
+            music_dir = Path.home() / "Müzik"
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM annotation a
                 JOIN media_file mf ON a.item_id = mf.id
-                WHERE a.play_count > 0 AND a.play_date IS NOT NULL
+                WHERE a.play_count > 0 AND a.play_date IS NOT NULL AND (mf.missing IS NULL OR mf.missing = 0)
                 ORDER BY a.play_date DESC
                 LIMIT ?
             """
             cursor.execute(query, (limit,))
             rows = cursor.fetchall()
             for r in rows:
-                tracks.append(
-                    Track(
-                        title=r["title"],
-                        artist=r["artist"],
-                        album=r["album"],
-                        track_num=r["track_number"] or 1,
-                        duration_seconds=int(r["duration"] or 0),
-                        year=str(r["year"] or ""),
+                rel_path = r["path"]
+                if (music_dir / rel_path).exists():
+                    tracks.append(
+                        Track(
+                            title=r["title"],
+                            artist=r["artist"],
+                            album=r["album"],
+                            track_num=r["track_number"] or 1,
+                            duration_seconds=int(r["duration"] or 0),
+                            year=str(r["year"] or ""),
+                        )
                     )
-                )
             conn.close()
         except Exception:
             pass
-
+        return tracks
 
     def get_all_library_tracks(self, db_path: Optional[Path] = None) -> list[Track]:
         """Read all active non-missing tracks currently in Navidrome library."""
@@ -129,27 +134,28 @@ class NavidromeScanner:
             conn = sqlite3.connect(f"file:{target_db}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-
+            music_dir = Path.home() / "Müzik"
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM media_file mf
-                WHERE mf.missing = 0
+                WHERE (mf.missing IS NULL OR mf.missing = 0)
             """
             cursor.execute(query)
             rows = cursor.fetchall()
             for r in rows:
-                tracks.append(
-                    Track(
-                        title=r["title"],
-                        artist=r["artist"],
-                        album=r["album"],
-                        track_num=r["track_number"] or 1,
-                        duration_seconds=int(r["duration"] or 0),
-                        year=str(r["year"] or ""),
+                rel_path = r["path"]
+                if (music_dir / rel_path).exists():
+                    tracks.append(
+                        Track(
+                            title=r["title"],
+                            artist=r["artist"],
+                            album=r["album"],
+                            track_num=r["track_number"] or 1,
+                            duration_seconds=int(r["duration"] or 0),
+                            year=str(r["year"] or ""),
+                        )
                     )
-                )
             conn.close()
         except Exception:
             pass
-
         return tracks
