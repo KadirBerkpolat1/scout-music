@@ -16,15 +16,16 @@ Scout is an open-source, modular music intelligence and archival system designed
    - Smart YouTube Music studio audio matching (filters out live recordings, phone covers, and low-res rips).
    - Studio-grade tagging with Mutagen: `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`, `APIC` cover embedding.
 
-2. **🧬 Playlist DNA Engine (`Scout Mix`)**
-   - Takes your favorite seed tracks or Subsonic seed playlists.
-   - Computes an affinity graph across Last.fm similar tracks and genre tags.
-   - Enforces artist diversity constraints (max 2 tracks per artist) and deduplicates against your history SQLite DB.
-   - Resolves candidates to official studio tracks and prepares a clean discovery mix.
+2. **🧬 Playlist DNA Engine & Dual Auto-Playlists**
+   - Takes your favorite seed tracks, Navidrome starred songs, or Subsonic playlists.
+   - Computes an affinity graph across Last.fm similar tracks and genre tags with cross-seed reinforcement multipliers.
+   - **Dual Auto-Playlists:** Generates `🆕 Scout Yeni Keşifler.m3u8` (strictly contains the latest downloaded discovery batch) and `✨ Scout Mix.m3u8` (the full ongoing discovery mix archive) for instant playback in Feishin/Navidrome.
+   - **Smart Negative Blacklist:** Automatically detects when you delete a disliked track from disk or library, adding it to SQLite blacklist so it is never re-suggested or re-downloaded.
+   - **Zero-Duplicate Guarantee:** Multi-layer check against Navidrome database, local filesystem, and history database before any download occurs.
 
 3. **📡 Subsonic & Local Library Integration**
    - Full REST API client compatible with **Navidrome**, **Gonic**, **Airsonic**, and **Funkwhale**.
-   - Syncs seed playlists (`🎯 Scout Seed`), injects discovery mixes (`✨ Scout Mix`), and triggers library rescans.
+   - Syncs seed playlists (`🎯 Scout Seed`), injects discovery mixes, and triggers instant library rescans (`navidrome scan`).
    - Runs in Standalone Local Folder mode (`~/Music`) if Subsonic is not configured.
 
 4. **⚡ Linux MPRIS Connector**
@@ -33,13 +34,12 @@ Scout is an open-source, modular music intelligence and archival system designed
 5. **🖥️ Interactive CLI & Terminal UI (TUI)**
    - Beautiful CLI built with `rich` tables and progress bars.
    - Full-screen interactive Textual TUI (`scout tui`) featuring live search, discovery generator, active downloads, and in-app settings editor.
-
 ---
 
 ## 🚀 Installation
 
 ```bash
-git clone https://github.com/berkos/scout-music.git
+git clone https://github.com/KadirBerkpolat1/scout-music.git
 cd scout-music
 pip install -e .
 ```
@@ -54,9 +54,11 @@ pip install -e .
 
 ### Interactive TUI
 ```bash
-scout tui
-# or simply
+# Launch full discovery mix based on your active favorites (Default)
 scout
+
+# Or launch interactive full-screen TUI Dashboard
+scout tui
 ```
 
 ### Command Line Interface
