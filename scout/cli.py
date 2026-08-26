@@ -457,8 +457,7 @@ def cmd_mix(args, config: Config):
             if res.success:
                 downloaded.append(cand.track)
             progress.advance(main_task)
-
-    # 1. Generate / update '🆕 Scout Yeni Keşifler.m3u8' (SADECE bu oturumda yeni inen parçalar)
+    # 1. Generate / update '🆕 Scout Yeni Keşifler.m3u8' (SADECE bu oturumda yeni inen ve diskte var olan parçalar)
     if downloaded:
         try:
             from scout.core.downloader import sanitize_filename
@@ -483,10 +482,14 @@ def cmd_mix(args, config: Config):
         except Exception:
             pass
 
-    # 2. Generate / update '✨ Scout Mix.m3u8' (Tüm aktif keşif havuzu)
+    # 2. Prune and update '✨ Scout Mix.m3u8' (SADECE diskte fiziksel olarak VAR OLAN keşif parçaları)
     try:
         mix_pl_file = config.general.music_dir / "✨ Scout Mix.m3u8"
-        discovery_tracks = list(config.general.discovery_dir.glob("*.mp3")) + list(config.general.discovery_dir.glob("*.flac"))
+        # Scan only files that physically exist right now
+        discovery_tracks = [
+            f for f in (list(config.general.discovery_dir.glob("*.mp3")) + list(config.general.discovery_dir.glob("*.flac")))
+            if f.is_file() and f.stat().st_size > 1000
+        ]
         # Sort by modification time so newest discoveries are at the top
         discovery_tracks.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
@@ -501,10 +504,9 @@ def cmd_mix(args, config: Config):
 
         with open(mix_pl_file, "w", encoding="utf-8") as pf:
             pf.write("\n".join(m3u_lines))
-        console.print(f"[dim]🎵 Genel Keşif Miksi Güncellendi: {mix_pl_file.name} ({len(discovery_tracks)} parça)[/dim]")
+        console.print(f"[dim]🎵 Genel Keşif Miksi Güncellendi: {mix_pl_file.name} (Diskteki {len(discovery_tracks)} canlı parça)[/dim]")
     except Exception:
         pass
-
     console.print(f"[bold green]✔ Added {len(downloaded)} tracks to Discovery library![/bold green]")
     if config.navidrome.scan_on_download:
         navidrome.trigger_scan()
