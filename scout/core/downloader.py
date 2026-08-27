@@ -26,7 +26,7 @@ from mutagen.mp3 import MP3
 from scout.core.config import Config, load_config
 from scout.core.dedupe import HistoryStore
 from scout.core.models import DownloadResult, Track
-
+from scout.providers.qobuz import QobuzFlacProvider
 
 def sanitize_filename(name: str) -> str:
     """Clean filename of illegal characters across Linux, macOS, and Windows."""
@@ -36,9 +36,15 @@ def sanitize_filename(name: str) -> str:
 
 
 class AudioDownloader:
-    def __init__(self, config: Optional[Config] = None, history_store: Optional[HistoryStore] = None):
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        history_store: Optional[HistoryStore] = None,
+        qobuz_provider: Optional[QobuzFlacProvider] = None,
+    ):
         self.config = config or load_config()
         self.history = history_store or HistoryStore()
+        self.qobuz = qobuz_provider or QobuzFlacProvider()
 
     def resolve_destination_path(self, track: Track, target_dir: Optional[Path] = None) -> Path:
         base_dir = target_dir or self.config.general.music_dir
@@ -180,6 +186,47 @@ class AudioDownloader:
         target_dir: Optional[Path] = None,
         progress_hook: Optional[Callable[[dict], None]] = None,
     ) -> DownloadResult:
+        dest_path = self.resolve_destination_path(track, target_dir)
+
+        # 1. Attempt True Lossless FLAC download via Qobuz if lossless_first or format is flac
+        if self.config.general.lossless_first or self.config.general.audio_format.lower() == "flac":
+            try:
+                stream_info = self.qobuz.resolve_flac_stream(track)
+                if stream_info and stream_info.get("download_url"):
+                    flac_url = stream_info["download_url"]
+                    container = stream_info.get("container", "flac")
+                    flac_dest = dest_path.with_suffix(f".{container}")
+
+                    resp = requests.get(flac_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
+                    if resp.status_code == 200:
+                        with tempfile.NamedTemporaryFile(suffix=f".{container}", delete=False) as tmp_flac:
+                            for chunk in resp.iter_content(chunk_size=65536):
+                                if chunk:
+                                    tmp_flac.write(chunk)
+                            tmp_flac_path = Path(tmp_flac.name)
+
+                        cover_bytes = self.download_cover_bytes(track.cover_url)
+                        self.tag_file(tmp_flac_path, track, cover_bytes)
+                        flac_dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(tmp_flac_path), str(flac_dest))
+
+                        bitrate_label = f"{stream_info.get('bit_depth', 24)}bit/{stream_info.get('sample_rate', 44100)//1000}kHz"
+                        self.history.record_download(
+                            track=track,
+                            file_path=flac_dest,
+                            source_url=flac_url,
+                            audio_format=container,
+                            bitrate=bitrate_label,
+                        )
+                        return DownloadResult(
+                            success=True,
+                            file_path=flac_dest,
+                            track=track,
+                        )
+            except Exception:
+                pass
+
+        # 2. Fallback to YouTube Music studio audio extraction via yt-dlp
         if not track.video_id and not track.source_url:
             return DownloadResult(
                 success=False,
@@ -188,10 +235,8 @@ class AudioDownloader:
             )
 
         source_url = track.source_url or f"https://www.youtube.com/watch?v={track.video_id}"
-        dest_path = self.resolve_destination_path(track, target_dir)
         audio_format = self.config.general.audio_format.lower()
         bitrate = self.config.general.bitrate.replace("k", "")
-
         # Prepare yt-dlp options
         postprocessors = [
             {

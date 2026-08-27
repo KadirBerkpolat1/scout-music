@@ -10,12 +10,11 @@ Scout is an open-source, modular music intelligence and archival system designed
 
 ## ✨ Key Features
 
-1. **Universal Downloader & Studio ID3 Tagger**
-   - Downloads official 320kbps MP3 / FLAC / Opus tracks via `yt-dlp`.
+1. **Universal Lossless & Studio Downloader**
+   - **Qobuz 24-bit Hi-Res & 16-bit Lossless FLAC:** Direct studio master stream extraction up to 24-bit / 192 kHz.
+   - **YouTube Music Studio Audio:** Automated fallback to 320kbps MP3 / Opus official studio tracks.
    - Zero-API Spotify parser (tracks, albums, playlists) with 640x640 CDN artwork.
-   - Smart YouTube Music studio audio matching (filters out live recordings, phone covers, and low-res rips).
-   - Studio-grade tagging with Mutagen: `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`, `APIC` cover embedding.
-
+   - Studio-grade tagging with Mutagen: `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`, `APIC` cover embedding & Vorbis FLAC tags.
 2. **🧬 Playlist DNA Engine & Dual Auto-Playlists**
    - Takes your favorite seed tracks, Navidrome starred songs, or Subsonic playlists.
    - Computes an affinity graph across Last.fm similar tracks and genre tags with cross-seed reinforcement multipliers.

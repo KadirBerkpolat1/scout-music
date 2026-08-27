@@ -44,7 +44,7 @@ class GeneralConfig:
     audio_format: str = "mp3"  # "mp3", "flac", "opus"
     bitrate: str = "320k"
     folder_template: str = "{artist}/{album}/{track_num:02d} - {title}"
-
+    lossless_first: bool = True  # Try Qobuz Hi-Res FLAC before YouTube Music
     def __post_init__(self):
         if isinstance(self.music_dir, str):
             self.music_dir = Path(os.path.expanduser(self.music_dir))
@@ -113,6 +113,7 @@ class Config:
                 audio_format=gen_data.get("audio_format", "mp3"),
                 bitrate=gen_data.get("bitrate", "320k"),
                 folder_template=gen_data.get("folder_template", "{artist}/{album}/{track_num:02d} - {title}"),
+                lossless_first=gen_data.get("lossless_first", True),
             )
 
             lfm_data = data.get("lastfm", {})
@@ -164,6 +165,7 @@ class Config:
             f'audio_format = "{self.general.audio_format}"',
             f'bitrate = "{self.general.bitrate}"',
             f'folder_template = "{self.general.folder_template}"',
+            f"lossless_first = {str(self.general.lossless_first).lower()}",
             "",
             "[lastfm]",
             f'api_key = "{self.lastfm.api_key}"',
