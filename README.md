@@ -101,6 +101,8 @@ Configuration is stored according to XDG standards at `~/.config/scout/config.to
 music_dir = "~/Music"
 discovery_dir = "~/Music/Discovery"
 audio_format = "mp3"       # "mp3" (320kbps), "flac", or "opus"
+bitrate = "320k"
+lossless_first = true      # Try Qobuz 24-bit/16-bit Hi-Res FLAC before YouTube Music
 folder_template = "{artist}/{album}/{track_num:02d} - {title}"
 
 [lastfm]
