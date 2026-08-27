@@ -103,6 +103,29 @@ class LastFMProvider:
                 results.append({"artist": name, "match": match})
         return results
 
+    def get_artist_top_tracks(self, artist: str, limit: int = 5) -> list[Track]:
+        params = {
+            "method": "artist.gettoptracks",
+            "artist": artist,
+            "limit": limit,
+            "autocorrect": 1,
+        }
+        data = self._call(params)
+        if not data or "toptracks" not in data or "track" not in data["toptracks"]:
+            return []
+
+        raw_tracks = data["toptracks"]["track"]
+        if isinstance(raw_tracks, dict):
+            raw_tracks = [raw_tracks]
+
+        tracks = []
+        for t in raw_tracks:
+            t_title = t.get("name", "")
+            t_artist = t.get("artist", {}).get("name", "") if isinstance(t.get("artist"), dict) else str(t.get("artist", "") or artist)
+            if t_title and t_artist:
+                tracks.append(Track(title=t_title, artist=t_artist))
+        return tracks
+
     def get_top_tags(self, artist: str, title: Optional[str] = None) -> list[str]:
         if title:
             params = {
@@ -130,5 +153,5 @@ class LastFMProvider:
         for tag in raw_tags:
             tag_name = tag.get("name", "")
             if tag_name:
-                tags.append(tag_name.lower())
-        return tags[:5]
+                tags.append(tag_name.lower().strip())
+        return tags[:10]

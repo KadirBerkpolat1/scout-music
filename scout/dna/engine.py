@@ -78,7 +78,27 @@ class PlaylistDNAEngine:
         # Gather all blacklisted / deleted keys
         blacklisted_keys = self.history.get_all_blacklist_keys()
 
-        # Step 1: Feature Extraction across seeds
+        # Step 1: Mood & Genre Profile Analysis across seeds
+        MELANCHOLIC_DARK_TAGS = {
+            "sad", "melancholy", "melancholic", "dark", "emo", "depressive",
+            "phonk", "slowed", "atmospheric", "j-rock", "japanese", "alt-rock",
+            "alternative rock", "metal", "post-rock", "shoegaze", "goth", "lo-fi", "anime"
+        }
+        GENERIC_POP_TAGS = {
+            "dance pop", "teen pop", "boy band", "eurovision", "party", "club", "disney", "bubblegum pop"
+        }
+
+        seed_tags: set[str] = set()
+        for s in seeds[:10]:  # sample top 10 seeds for tags
+            try:
+                st = self.lastfm.get_top_tags(s.artist, s.title)
+                seed_tags.update(st)
+            except Exception:
+                pass
+
+        is_melancholic_profile = bool(seed_tags & MELANCHOLIC_DARK_TAGS)
+
+        # Step 2: Feature Extraction across seeds (with 2-Hop Deep Discovery)
         candidate_pool: dict[str, list[DiscoveryCandidate]] = collections.defaultdict(list)
         seed_frequencies: dict[str, int] = collections.defaultdict(int)
 
@@ -92,6 +112,26 @@ class PlaylistDNAEngine:
             # Try Last.fm first
             similar = self.lastfm.get_similar_tracks(seed.artist, seed.title, limit=15)
 
+            # 2-Hop Deep Discovery: If similar tracks are sparse, query similar artists' top tracks
+            if len(similar) < 5:
+                try:
+                    sim_artists = self.lastfm.get_similar_artists(seed.artist, limit=3)
+                    for sa in sim_artists:
+                        sa_name = sa.get("artist", "")
+                        sa_match = sa.get("match", 0.7)
+                        top_tracks = self.lastfm.get_artist_top_tracks(sa_name, limit=3)
+                        for tt in top_tracks:
+                            similar.append(
+                                DiscoveryCandidate(
+                                    track=tt,
+                                    similarity_score=max(0.4, sa_match * 0.9),
+                                    seed_track=seed.display_name,
+                                    reason=f"Deep Artist Discovery from {seed.artist} -> {sa_name}",
+                                )
+                            )
+                except Exception:
+                    pass
+
             # Fallback to YouTube Music Radio if Last.fm yielded zero
             if not similar:
                 # Find video_id for seed if missing
@@ -104,7 +144,6 @@ class PlaylistDNAEngine:
                 if v_id:
                     radio_tracks = self.ytm.get_radio_tracks(v_id, limit=15)
                     for r_idx, r_track in enumerate(radio_tracks):
-                        # Approximate similarity decay: 1.0 for first track down to 0.4
                         sim_score = max(0.4, 1.0 - (r_idx * 0.04))
                         similar.append(
                             DiscoveryCandidate(
@@ -156,6 +195,23 @@ class PlaylistDNAEngine:
 
             composite_weight = sum_similarity * reinforcement_multiplier
 
+            # Mood & Genre Tag Affinity Weighting
+            if is_melancholic_profile:
+                cand_tags = set(base_candidate.genre_tags)
+                if not cand_tags:
+                    try:
+                        cand_tags = set(self.lastfm.get_top_tags(base_candidate.track.artist, base_candidate.track.title))
+                        base_candidate.genre_tags = list(cand_tags)
+                    except Exception:
+                        pass
+
+                # Boost for matching dark/melancholic/alt/rock/emo tags
+                if cand_tags & MELANCHOLIC_DARK_TAGS:
+                    composite_weight *= 1.35
+                # Heavy penalty for generic commercial pop when user taste is melancholic
+                elif cand_tags & GENERIC_POP_TAGS:
+                    composite_weight *= 0.4
+
             # Reason description
             if num_seeds > 1:
                 seeds_str = ", ".join({c.seed_track for c in cand_list if c.seed_track})
@@ -163,7 +219,6 @@ class PlaylistDNAEngine:
 
             base_candidate.similarity_score = composite_weight
             weighted_candidates.append((composite_weight, base_candidate))
-
         # Sort candidates descending by score
         weighted_candidates.sort(key=lambda x: x[0], reverse=True)
 

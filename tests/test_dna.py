@@ -109,3 +109,47 @@ def test_dna_engine_excludes_existing_and_blacklisted(tmp_path: Path):
     assert len(mix) == 1
     assert mix[0].track.title == "Fresh Discovery"
     assert mix[0].track.artist == "New Artist"
+
+def test_dna_engine_mood_tag_affinity_weighting(tmp_path: Path):
+    db_file = tmp_path / "dna_mood.db"
+    store = HistoryStore(db_path=db_file)
+    cfg = Config()
+    cfg.general.music_dir = tmp_path / "Music"
+    cfg.general.discovery_dir = tmp_path / "Discovery"
+
+    mock_lastfm = MagicMock()
+    mock_ytm = MagicMock()
+
+    seed = Track(title="misery.", artist="pupsies")
+
+    # Mock seed tags -> melancholic/dark profile
+    def fake_get_tags(artist, title=None):
+        if artist == "pupsies":
+            return ["dark", "emo", "slowed", "melancholy"]
+        elif artist == "Dark Alt Artist":
+            return ["melancholic", "alt-rock", "atmospheric"]
+        elif artist == "Commercial Pop Artist":
+            return ["dance pop", "teen pop", "boy band"]
+        return []
+
+    mock_lastfm.get_top_tags = fake_get_tags
+
+    cand_dark = DiscoveryCandidate(track=Track(title="Dark Alt Track", artist="Dark Alt Artist", video_id="v_dark"), similarity_score=0.8)
+    cand_pop = DiscoveryCandidate(track=Track(title="Commercial Pop Track", artist="Commercial Pop Artist", video_id="v_pop"), similarity_score=0.8)
+
+    mock_lastfm.get_similar_tracks = MagicMock(return_value=[cand_pop, cand_dark])
+
+    engine = PlaylistDNAEngine(
+        config=cfg,
+        history_store=store,
+        ytmusic_provider=mock_ytm,
+        lastfm_provider=mock_lastfm,
+    )
+
+    mix = engine.generate_mix(seeds=[seed], target_count=5)
+
+    # Dark alt track should be ranked 1st due to +35% boost, Pop track suppressed by 60%
+    assert len(mix) == 2
+    assert mix[0].track.title == "Dark Alt Track"
+    assert mix[1].track.title == "Commercial Pop Track"
+    assert mix[0].similarity_score > mix[1].similarity_score

@@ -15,13 +15,14 @@ Scout is an open-source, modular music intelligence and archival system designed
    - **YouTube Music Studio Audio:** Automated fallback to 320kbps MP3 / Opus official studio tracks.
    - Zero-API Spotify parser (tracks, albums, playlists) with 640x640 CDN artwork.
    - Studio-grade tagging with Mutagen: `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`, `APIC` cover embedding & Vorbis FLAC tags.
-2. **🧬 Playlist DNA Engine & Dual Auto-Playlists**
+2. **🧬 Playlist DNA Engine & Mood Tag Affinity**
    - Takes your favorite seed tracks, Navidrome starred songs, or Subsonic playlists.
    - Computes an affinity graph across Last.fm similar tracks and genre tags with cross-seed reinforcement multipliers.
+   - **Mood & Tag Affinity Filtering:** Analyzes emotional depth (`melancholy`, `dark`, `sad`, `emo`, `phonk`, `slowed`, `j-rock`, `alt-rock`) and boosts matching candidates (+35%) while suppressing generic pop (-60%).
+   - **2-Hop Deep Discovery:** Automatically queries related artist discographies when direct similarities are sparse for underground tracks.
    - **Dual Auto-Playlists:** Generates `🆕 Scout Yeni Keşifler.m3u8` (strictly contains the latest downloaded discovery batch) and `✨ Scout Mix.m3u8` (the full ongoing discovery mix archive) for instant playback in Feishin/Navidrome.
    - **Smart Negative Blacklist:** Automatically detects when you delete a disliked track from disk or library, adding it to SQLite blacklist so it is never re-suggested or re-downloaded.
    - **Zero-Duplicate Guarantee:** Multi-layer check against Navidrome database, local filesystem, and history database before any download occurs.
-
 3. **📡 Subsonic & Local Library Integration**
    - Full REST API client compatible with **Navidrome**, **Gonic**, **Airsonic**, and **Funkwhale**.
    - Syncs seed playlists (`🎯 Scout Seed`), injects discovery mixes, and triggers instant library rescans (`navidrome scan`).
