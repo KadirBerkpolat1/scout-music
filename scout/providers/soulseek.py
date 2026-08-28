@@ -34,14 +34,30 @@ class SoulseekFlacProvider:
         return "/home/sevelebeci/.local/bin/sockseek"
 
     def clean_search_query(self, artist: str, title: str) -> str:
-        # Strip featured artists, parentheticals, and punctuation that might confuse P2P searches
         clean_artist = re.sub(r",.*|\s+feat\..*|\s+ft\..*|\s*&.*", "", artist, flags=re.IGNORECASE).strip()
         clean_title = re.sub(r"\s*[\(\[\{].*?[\)\]\}]", "", title).strip()
-        # Remove characters that cause strict delimiter matching in soulseek
         clean_artist = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", clean_artist)
         clean_title = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", clean_title)
         query = f"{clean_artist} {clean_title}"
         return re.sub(r"\s+", " ", query).strip()
+
+    def generate_search_queries(self, artist: str, title: str) -> list[str]:
+        from scout.core.dedupe import extract_artists, extract_title_variants
+        queries = []
+        artists = extract_artists(artist)
+        titles = extract_title_variants(title)
+
+        for a in artists[:2]:
+            clean_a = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", a).strip()
+            for t in titles:
+                clean_t = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", t).strip()
+                if clean_a and clean_t:
+                    q = f"{clean_a} {clean_t}"
+                    q = re.sub(r"\s+", " ", q).strip()
+                    if q and q not in queries:
+                        queries.append(q)
+
+        return queries or [self.clean_search_query(artist, title)]
 
     def download_flac(
         self,
@@ -58,21 +74,7 @@ class SoulseekFlacProvider:
         exe = self.get_executable()
         timeout_sec = timeout or self.config.timeout_seconds
         search_timeout_ms = min(6000, timeout_sec * 1000)
-
-        # Deduplicate search queries
-        raw_queries = [
-            self.clean_search_query(track.artist, track.title),
-        ]
-        if " - " in track.title:
-            parts = track.title.split(" - ", 1)
-            raw_queries.append(self.clean_search_query(track.artist, parts[1].strip()))
-            raw_queries.append(self.clean_search_query(track.artist, parts[0].strip()))
-
-        queries_to_try = []
-        for q in raw_queries:
-            if q and q not in queries_to_try:
-                queries_to_try.append(q)
-
+        queries_to_try = self.generate_search_queries(track.artist, track.title)
         with tempfile.TemporaryDirectory(prefix="scout_slsk_") as tmpdir:
             tmp_out_dir = Path(tmpdir)
 
@@ -81,6 +83,7 @@ class SoulseekFlacProvider:
                     exe,
                     q,
                     "--song",
+                    "--no-listen",
                     "--user", self.config.username,
                     "--pass", self.config.password,
                     "-o", str(tmp_out_dir),

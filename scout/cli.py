@@ -606,15 +606,29 @@ def cmd_upgrade(args, config: Config):
         main_task = progress.add_task(f"Upgrading library to FLAC ({len(mp3_files)} tracks)", total=len(mp3_files))
 
         for idx, mp3_path in enumerate(mp3_files, 1):
-            stem = mp3_path.stem
-            if " - " in stem:
-                parts = stem.split(" - ", 1)
-                artist, title = parts[0].strip(), parts[1].strip()
-            else:
-                artist = mp3_path.parent.name
-                title = stem
+            artist = ""
+            title = ""
+            album = ""
+            try:
+                from mutagen.mp3 import MP3
+                audio = MP3(mp3_path)
+                if audio.tags:
+                    title = str(audio.tags.get("TIT2", ""))
+                    artist = str(audio.tags.get("TPE1", ""))
+                    album = str(audio.tags.get("TALB", ""))
+            except Exception:
+                pass
 
-            track = Track(artist=artist, title=title)
+            if not artist or not title:
+                stem = mp3_path.stem
+                if " - " in stem:
+                    parts = stem.split(" - ", 1)
+                    artist, title = parts[0].strip(), parts[1].strip()
+                else:
+                    artist = mp3_path.parent.name
+                    title = stem
+
+            track = Track(artist=artist, title=title, album=album or "Single")
             progress.update(main_task, description=f"[{idx}/{len(mp3_files)}] Soulseek FLAC: {artist} - {title}")
 
             try:
