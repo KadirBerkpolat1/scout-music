@@ -130,6 +130,14 @@ def cmd_add(args, config: Config):
     if not track:
         console.print("[red]❌ Could not find or resolve track matching query.[/red]")
         sys.exit(1)
+    force = getattr(args, "force", False)
+    if not force:
+        existing = downloader.is_track_already_present(track, target_dir)
+        if existing:
+            console.print(f"[yellow]✔ Track already exists in library:[/yellow] {existing} [dim](use --force to re-download)[/dim]")
+            if config.navidrome.scan_on_download:
+                scanner.trigger_scan()
+            return
 
     console.print(f"[bold green]⬇ Downloading:[/bold green] [bold cyan]{track.display_name}[/bold cyan] [dim]({track.album})[/dim]")
 
@@ -141,18 +149,20 @@ def cmd_add(args, config: Config):
         console=console,
     ) as progress:
         task = progress.add_task("Downloading studio audio & tagging ID3...", total=None)
-        res = downloader.download_track(track, target_dir=target_dir)
+        res = downloader.download_track(track, target_dir=target_dir, overwrite=force)
         progress.update(task, completed=100, total=100)
 
     if res.success:
-        console.print(f"[bold green]✔ Saved to:[/bold green] {res.file_path}")
+        if res.already_exists:
+            console.print(f"[bold yellow]✔ Already present at:[/bold yellow] {res.file_path}")
+        else:
+            console.print(f"[bold green]✔ Saved to:[/bold green] {res.file_path}")
         if config.navidrome.scan_on_download:
             scanner.trigger_scan()
         notify("🎯 Scout Download Complete", f"Added: {track.display_name}")
     else:
         console.print(f"[bold red]❌ Download failed:[/bold red] {res.error}")
         sys.exit(1)
-
 
 def cmd_album(args, config: Config):
     render_banner()
@@ -190,6 +200,7 @@ def cmd_album(args, config: Config):
         border_style="cyan"
     ))
 
+    force = getattr(args, "force", False)
     success_count = 0
     with Progress(
         SpinnerColumn(),
@@ -202,6 +213,14 @@ def cmd_album(args, config: Config):
 
         for idx, t in enumerate(album_obj.tracks, 1):
             progress.update(main_task, description=f"[{idx}/{len(album_obj.tracks)}] {t.title}")
+
+            if not force:
+                existing = downloader.is_track_already_present(t, target_dir)
+                if existing:
+                    success_count += 1
+                    progress.advance(main_task)
+                    continue
+
             # Ensure video_id is resolved
             if not t.video_id:
                 matched = ytm.search_track(t.artist, t.title, album=album_obj.title)
@@ -216,12 +235,12 @@ def cmd_album(args, config: Config):
             t.album_artist = album_obj.artist
             t.year = album_obj.year
 
-            res = downloader.download_track(t, target_dir=target_dir)
+            res = downloader.download_track(t, target_dir=target_dir, overwrite=force)
             if res.success:
                 success_count += 1
             progress.advance(main_task)
 
-    console.print(f"[bold green]✔ Successfully downloaded {success_count}/{len(album_obj.tracks)} tracks![/bold green]")
+    console.print(f"[bold green]✔ Successfully processed {success_count}/{len(album_obj.tracks)} tracks![/bold green]")
     if config.navidrome.scan_on_download:
         scanner.trigger_scan()
     notify("💿 Album Download Complete", f"{album_obj.artist} - {album_obj.title} ({success_count} tracks)")
@@ -319,15 +338,20 @@ def cmd_radio(args, config: Config):
         console=console,
     ) as progress:
         main_task = progress.add_task("Downloading discovery radio...", total=len(similar))
+        force = getattr(args, "force", False)
         for idx, cand in enumerate(similar, 1):
             progress.update(main_task, description=f"[{idx}/{len(similar)}] {cand.track.display_name}")
+            if not force:
+                existing = downloader.is_track_already_present(cand.track, target_dir)
+                if existing:
+                    progress.advance(main_task)
+                    continue
             matched = ytm.search_track(cand.track.artist, cand.track.title)
             if matched and matched.video_id:
-                res = downloader.download_track(matched, target_dir=target_dir)
-                if res.success:
+                res = downloader.download_track(matched, target_dir=target_dir, overwrite=force)
+                if res.success and not res.already_exists:
                     downloaded.append(matched)
             progress.advance(main_task)
-
     if downloaded:
         try:
             from scout.core.downloader import sanitize_filename
@@ -451,10 +475,11 @@ def cmd_mix(args, config: Config):
         console=console,
     ) as progress:
         main_task = progress.add_task("Archiving Scout Mix...", total=len(candidates))
+        force = getattr(args, "force", False)
         for idx, cand in enumerate(candidates, 1):
             progress.update(main_task, description=f"[{idx}/{len(candidates)}] {cand.track.display_name}")
-            res = downloader.download_track(cand.track, target_dir=target_dir)
-            if res.success:
+            res = downloader.download_track(cand.track, target_dir=target_dir, overwrite=force)
+            if res.success and not res.already_exists:
                 downloaded.append(cand.track)
             progress.advance(main_task)
     # 1. Generate / update '🆕 Scout Yeni Keşifler.m3u8' (SADECE bu oturumda yeni inen ve diskte var olan parçalar)
@@ -521,7 +546,7 @@ def cmd_mpris(args, config: Config):
         sys.exit(1)
 
     console.print(f"[bold green]🎵 Currently Playing:[/bold green] [bold cyan]{track.display_name}[/bold cyan] [dim]({track.album})[/dim]")
-    cmd_radio(argparse.Namespace(query=f"{track.artist} - {track.title}", count=args.count, dir=args.dir), config)
+    cmd_radio(argparse.Namespace(query=f"{track.artist} - {track.title}", count=args.count, dir=args.dir, force=getattr(args, "force", False)), config)
 
 
 def cmd_stats(args, config: Config):
@@ -609,22 +634,26 @@ def main():
     p_add.add_argument("query", help="Track URL or 'Artist - Title'")
     p_add.add_argument("--dir", help="Custom target directory")
     p_add.add_argument("-y", "--yes", action="store_true", help="Auto-select top match without interactive prompt")
+    p_add.add_argument("-f", "--force", action="store_true", help="Force overwrite even if track exists")
 
     # album
     p_album = subparsers.add_parser("album", help="Download complete album into {Artist}/{Album}/")
     p_album.add_argument("query", help="Album URL or 'Artist - Album'")
     p_album.add_argument("--dir", help="Custom target directory")
+    p_album.add_argument("-f", "--force", action="store_true", help="Force re-download existing album tracks")
 
     # artist
     p_artist = subparsers.add_parser("artist", help="List and download artist discography albums")
     p_artist.add_argument("artist", help="Artist Name")
     p_artist.add_argument("--dir", help="Custom target directory")
+    p_artist.add_argument("-f", "--force", action="store_true", help="Force re-download existing tracks")
 
     # radio
     p_radio = subparsers.add_parser("radio", help="Download track + 10 similar discovery tracks")
     p_radio.add_argument("query", help="Seed Track URL or 'Artist - Title'")
     p_radio.add_argument("--count", type=int, default=10, help="Number of similar tracks")
     p_radio.add_argument("--dir", help="Custom target directory")
+    p_radio.add_argument("-f", "--force", action="store_true", help="Force re-download existing discovery tracks")
 
     # mix
     p_mix = subparsers.add_parser("mix", help="Run Playlist DNA Engine on seeds and generate discovery mix")
@@ -633,13 +662,13 @@ def main():
     p_mix.add_argument("--count", type=int, default=20, help="Number of discovery tracks")
     p_mix.add_argument("--max-per-artist", type=int, default=2, help="Max tracks per artist constraint")
     p_mix.add_argument("--dir", help="Custom target directory")
+    p_mix.add_argument("-f", "--force", action="store_true", help="Force re-download existing discovery tracks")
 
     # mpris
     p_mpris = subparsers.add_parser("mpris", help="Instant discovery radio from currently playing song in MPRIS")
     p_mpris.add_argument("--count", type=int, default=10, help="Number of discovery tracks")
     p_mpris.add_argument("--dir", help="Custom target directory")
-
-    # watch
+    p_mpris.add_argument("-f", "--force", action="store_true", help="Force re-download existing tracks")
     p_watch = subparsers.add_parser("watch", help="Background watcher daemon for starred songs & seed changes")
     p_watch.add_argument("--interval", type=int, default=30, help="Check interval in seconds")
 
@@ -660,6 +689,7 @@ def main():
             count=10,
             max_per_artist=2,
             dir=None,
+            force=False,
         )
         cmd_mix(default_args, config)
     elif args.command == "add":

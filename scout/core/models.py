@@ -35,6 +35,11 @@ class Track:
         from scout.core.dedupe import normalize_key
         return normalize_key(self.artist, self.title)
 
+    @property
+    def clean_keys(self) -> set[str]:
+        from scout.core.dedupe import get_track_keys
+        return get_track_keys(self.artist, self.title)
+
     def to_dict(self) -> dict:
         return {
             "title": self.title,
@@ -114,4 +119,5 @@ class DownloadResult:
     success: bool
     file_path: Optional[Path] = None
     track: Optional[Track] = None
+    already_exists: bool = False
     error: Optional[str] = None

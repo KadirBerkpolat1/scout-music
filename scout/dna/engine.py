@@ -41,40 +41,47 @@ class PlaylistDNAEngine:
         if progress_callback:
             progress_callback(f"Analyzing {total_seeds} seed tracks...", 0, total_seeds)
 
+        from scout.core.dedupe import get_track_keys
+
         # Build active seed keys to exclude
-        seed_keys = {seed.clean_key for seed in seeds}
+        existing_library_keys: set[str] = set()
+        for seed in seeds:
+            existing_library_keys.update(seed.clean_keys)
 
         # Gather all existing tracks in library (Navidrome DB + local filesystem + history)
-        existing_library_keys: set[str] = set(seed_keys)
-
         try:
             from scout.integrations.navidrome import NavidromeScanner
             scanner = NavidromeScanner(config=self.config.navidrome)
             for lib_track in scanner.get_all_library_tracks():
-                existing_library_keys.add(lib_track.clean_key)
+                existing_library_keys.update(lib_track.clean_keys)
         except Exception:
             pass
 
         # Scan local music and discovery directories for existing files
         for base_dir in [self.config.general.music_dir, self.config.general.discovery_dir]:
             if base_dir and base_dir.exists():
-                for ext in ["*.mp3", "*.flac", "*.opus", "*.m4a", "*.ogg"]:
+                for ext in ["*.mp3", "*.flac", "*.opus", "*.m4a", "*.ogg", "*.wav"]:
                     for f in base_dir.rglob(ext):
+                        if not f.is_file() or f.stat().st_size < 1000:
+                            continue
                         stem = f.stem
                         if " - " in stem:
                             parts = stem.split(" - ", 1)
                             clean_artist, clean_title = parts[0].strip(), parts[1].strip()
-                            # Strip leading track numbers like "01 - Title"
                             import re
                             clean_artist = re.sub(r"^\d+\s*", "", clean_artist)
                             clean_title = re.sub(r"^\d+\s*", "", clean_title)
-                            existing_library_keys.add(normalize_key(clean_artist, clean_title))
+                            existing_library_keys.update(get_track_keys(clean_artist, clean_title))
                         else:
-                            existing_library_keys.add(normalize_key("", stem))
+                            existing_library_keys.update(get_track_keys("", stem))
+
+                        # If folder structure is Artist/Album/Track
+                        parent_artist = f.parent.parent.name
+                        if parent_artist and parent_artist not in ["Müzik", "Music", "Keşif", "Discovery"]:
+                            existing_library_keys.update(get_track_keys(parent_artist, stem))
 
         # Add historical downloads to library keys
         existing_library_keys.update(self.history.get_all_downloaded_keys())
-
         # Gather all blacklisted / deleted keys
         blacklisted_keys = self.history.get_all_blacklist_keys()
 
@@ -155,33 +162,33 @@ class PlaylistDNAEngine:
                         )
 
             for cand in similar:
-                c_key = cand.track.clean_key
+                cand_keys = cand.track.clean_keys
                 # Filter out seeds & existing library tracks
-                if c_key in existing_library_keys:
+                if cand_keys & existing_library_keys:
                     continue
 
                 # Filter out blacklisted / deleted tracks
-                if c_key in blacklisted_keys or self.history.is_blacklisted(cand.track.artist, cand.track.title):
+                if cand_keys & blacklisted_keys or self.history.is_blacklisted(cand.track.artist, cand.track.title):
                     continue
 
                 # Filter out below threshold
                 if cand.similarity_score < similarity_threshold:
                     continue
 
+                c_key = cand.track.clean_key
                 candidate_pool[c_key].append(cand)
                 seed_frequencies[c_key] += 1
-
         # Step 2: Affinity Graph & Cross-Seed Reinforcement Weighting
         weighted_candidates: list[tuple[float, DiscoveryCandidate]] = []
         recent_downloaded_keys = self.history.get_downloaded_within_days(days=30)
 
         for c_key, cand_list in candidate_pool.items():
-            # Skip if downloaded within last 30 days
-            if c_key in recent_downloaded_keys:
-                continue
-
             base_candidate = cand_list[0]
-            # Sum of similarity scores
+            cand_keys = base_candidate.track.clean_keys
+
+            # Skip if downloaded within last 30 days or already present
+            if cand_keys & recent_downloaded_keys or cand_keys & existing_library_keys:
+                continue
             sum_similarity = sum(c.similarity_score for c in cand_list)
 
             # Cross-seed reinforcement bonus:

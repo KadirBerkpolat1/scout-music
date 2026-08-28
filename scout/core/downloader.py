@@ -69,6 +69,61 @@ class AudioDownloader:
 
         full_path.parent.mkdir(parents=True, exist_ok=True)
         return full_path
+    def is_track_already_present(self, track: Track, target_dir: Optional[Path] = None) -> Optional[Path]:
+        """
+        Check if the track already exists physically on disk in target_dir, discovery_dir,
+        or music_dir across supported audio formats, or in history database with an existing file.
+        """
+        from scout.core.dedupe import get_track_keys
+        track_keys = track.clean_keys
+
+        # 1. Check exact resolved destination path with all valid audio extensions
+        dest_path = self.resolve_destination_path(track, target_dir)
+        for ext in [".mp3", ".flac", ".opus", ".m4a", ".ogg", ".wav"]:
+            candidate_path = dest_path.with_suffix(ext)
+            if candidate_path.exists() and candidate_path.is_file() and candidate_path.stat().st_size > 1000:
+                return candidate_path
+
+        # 2. Check discovery_dir, target_dir, and music_dir root / subfolders
+        search_dirs = []
+        if target_dir and target_dir.exists():
+            search_dirs.append(target_dir)
+        if self.config.general.discovery_dir.exists() and self.config.general.discovery_dir not in search_dirs:
+            search_dirs.append(self.config.general.discovery_dir)
+        if self.config.general.music_dir.exists() and self.config.general.music_dir not in search_dirs:
+            search_dirs.append(self.config.general.music_dir)
+
+        for s_dir in search_dirs:
+            for ext in ["*.mp3", "*.flac", "*.opus", "*.m4a", "*.ogg", "*.wav"]:
+                for f in s_dir.glob(ext):
+                    if not f.is_file() or f.stat().st_size < 1000:
+                        continue
+                    stem = f.stem
+                    file_keys = set()
+                    if " - " in stem:
+                        parts = stem.split(" - ", 1)
+                        file_keys = get_track_keys(parts[0].strip(), parts[1].strip())
+                    else:
+                        file_keys = get_track_keys("", stem)
+                    if track_keys & file_keys:
+                        return f
+
+        # 3. Check history database recorded file_path
+        if self.history.is_downloaded(track.artist, track.title):
+            with self.history._get_connection() as conn:
+                keys = list(track_keys)
+                if keys:
+                    placeholders = ",".join("?" * len(keys))
+                    cursor = conn.execute(
+                        f"SELECT file_path FROM downloaded_tracks WHERE clean_key IN ({placeholders}) AND file_path IS NOT NULL AND file_path != ''",
+                        keys,
+                    )
+                    for row in cursor.fetchall():
+                        hp = Path(row["file_path"])
+                        if hp.exists() and hp.is_file() and hp.stat().st_size > 1000:
+                            return hp
+
+        return None
 
     def download_cover_bytes(self, url: str) -> Optional[bytes]:
         if not url:
@@ -185,9 +240,25 @@ class AudioDownloader:
         track: Track,
         target_dir: Optional[Path] = None,
         progress_hook: Optional[Callable[[dict], None]] = None,
+        overwrite: bool = False,
     ) -> DownloadResult:
-        dest_path = self.resolve_destination_path(track, target_dir)
+        if not overwrite:
+            existing = self.is_track_already_present(track, target_dir)
+            if existing:
+                self.history.record_download(
+                    track=track,
+                    file_path=existing,
+                    audio_format=existing.suffix.lstrip("."),
+                    bitrate=self.config.general.bitrate,
+                )
+                return DownloadResult(
+                    success=True,
+                    file_path=existing,
+                    track=track,
+                    already_exists=True,
+                )
 
+        dest_path = self.resolve_destination_path(track, target_dir)
         # 1. Attempt True Lossless FLAC download via Qobuz if lossless_first or format is flac
         if self.config.general.lossless_first or self.config.general.audio_format.lower() == "flac":
             try:

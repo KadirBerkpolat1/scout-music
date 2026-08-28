@@ -11,20 +11,88 @@ from scout.core.config import get_xdg_data_dir
 from scout.core.models import Track
 
 
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    # Strip feat/ft/official/audio/remaster tags
+    t = re.sub(r"\b(feat|ft|featuring|official|audio|mv|remastered|lyrics?|video)\b.*", "", text, flags=re.IGNORECASE)
+    # Lowercase and keep alphanumeric + unicode letters/numbers
+    t = re.sub(r"[^a-zA-Z0-9\u0080-\uffff]", "", t.lower())
+    return t
+
+
+def extract_artists(artist_str: str) -> list[str]:
+    """Extract individual and combined artist representations."""
+    if not artist_str:
+        return [""]
+    # Split by comma, &, feat., ft., x, /
+    raw_artists = re.split(r",|\s+&\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+x\s+|\s*/\s*", artist_str, flags=re.IGNORECASE)
+    artists = [a.strip() for a in raw_artists if a.strip()]
+    results = [artist_str.strip()]
+    for a in artists:
+        if a not in results:
+            results.append(a)
+    return results
+
+
+def extract_title_variants(title_str: str) -> list[str]:
+    """Extract full title and component variants (e.g. Kanji - Romaji, Title (Alt))."""
+    if not title_str:
+        return [""]
+    variants = [title_str.strip()]
+
+    # 1. Check parenthetical / bracket content: e.g. "Title (Alt Title)" or "Title [Alt Title]"
+    paren_matches = re.findall(r"[\(\[\{](.*?)[\)\]\}]", title_str)
+    for p in paren_matches:
+        p_clean = p.strip()
+        if not re.search(r"\b(feat|ft|official|audio|mv|video|remaster|live|ver|version)\b", p_clean, flags=re.IGNORECASE):
+            if p_clean and p_clean not in variants:
+                variants.append(p_clean)
+
+    # Clean stripped title (without parentheticals)
+    stripped = re.sub(r"[\(\[\{].*?[\)\]\}]", "", title_str).strip()
+    if stripped and stripped not in variants:
+        variants.append(stripped)
+
+    # 2. Check delimiters like " - ", " / ", " // ", " ~ " in title (e.g. "唱 - Show", "堕天 - Daten", "残響散歌 - Zankyosanka")
+    for delim in [" - ", " / ", " // ", " ~ ", " : "]:
+        if delim in stripped:
+            parts = [p.strip() for p in stripped.split(delim) if p.strip()]
+            for p in parts:
+                if p not in variants:
+                    variants.append(p)
+
+    return variants
+
+
+def get_track_keys(artist: str, title: str) -> set[str]:
+    """Generate a comprehensive set of normalized keys covering title/artist variants."""
+    keys = set()
+    artists = extract_artists(artist)
+    titles = extract_title_variants(title)
+
+    for a in artists:
+        norm_a = normalize_text(a)
+        if not norm_a:
+            continue
+        for t in titles:
+            norm_t = normalize_text(t)
+            if norm_t:
+                keys.add(f"{norm_a}:{norm_t}")
+
+    # Fallback if no artist
+    for t in titles:
+        norm_t = normalize_text(t)
+        if norm_t:
+            keys.add(f":{norm_t}")
+
+    return keys
+
+
 def normalize_key(artist: str, title: str) -> str:
-    # Strip parentheticals and bracketed tags from artist
-    norm_artist = re.sub(r"\s*\(.*?\)", "", artist)
-    norm_artist = re.sub(r"\s*\[.*?\]", "", norm_artist)
-    norm_artist = re.sub(r"[^a-zA-Z0-9\u0080-\uffff]", "", norm_artist.lower())
-
-    # Strip parentheticals, brackets, and feat/remaster/official tags from title
-    norm_title = re.sub(r"\s*\(.*?\)", "", title)
-    norm_title = re.sub(r"\s*\[.*?\]", "", norm_title)
-    norm_title = re.sub(r"\b(feat|ft|featuring|official|audio|mv|remastered)\b.*", "", norm_title, flags=re.IGNORECASE)
-    norm_title = re.sub(r"[^a-zA-Z0-9\u0080-\uffff]", "", norm_title.lower())
-
+    norm_artist = normalize_text(artist)
+    norm_title = normalize_text(title)
     return f"{norm_artist}:{norm_title}"
-
 class HistoryStore:
     def __init__(self, db_path: Optional[Path] = None):
         is_custom_path = db_path is not None
@@ -130,13 +198,15 @@ class HistoryStore:
             pass
 
     def is_downloaded(self, artist: str, title: str) -> bool:
-        key = normalize_key(artist, title)
+        keys = list(get_track_keys(artist, title))
+        if not keys:
+            return False
+        placeholders = ",".join("?" * len(keys))
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT 1 FROM downloaded_tracks WHERE clean_key = ?", (key,)
+                f"SELECT 1 FROM downloaded_tracks WHERE clean_key IN ({placeholders})", keys
             )
             return cursor.fetchone() is not None
-
     def record_download(
         self,
         track: Track,
@@ -164,13 +234,15 @@ class HistoryStore:
             conn.commit()
 
     def is_seed_processed(self, artist: str, title: str) -> bool:
-        key = normalize_key(artist, title)
+        keys = list(get_track_keys(artist, title))
+        if not keys:
+            return False
+        placeholders = ",".join("?" * len(keys))
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT 1 FROM processed_seeds WHERE seed_key = ?", (key,)
+                f"SELECT 1 FROM processed_seeds WHERE seed_key IN ({placeholders})", keys
             )
             return cursor.fetchone() is not None
-
     def record_seed(self, artist: str, title: str, reason: str = "discovery"):
         key = normalize_key(artist, title)
         with self._get_connection() as conn:
@@ -181,13 +253,15 @@ class HistoryStore:
             conn.commit()
 
     def is_blacklisted(self, artist: str, title: str) -> bool:
-        key = normalize_key(artist, title)
+        keys = list(get_track_keys(artist, title))
+        if not keys:
+            return False
+        placeholders = ",".join("?" * len(keys))
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT 1 FROM discovery_blacklist WHERE clean_key = ?", (key,)
+                f"SELECT 1 FROM discovery_blacklist WHERE clean_key IN ({placeholders})", keys
             )
             return cursor.fetchone() is not None
-
     def blacklist(self, artist: str, title: str, reason: str = ""):
         key = normalize_key(artist, title)
         with self._get_connection() as conn:
@@ -221,20 +295,37 @@ class HistoryStore:
         since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         with self._get_connection() as conn:
             cursor = conn.execute("""
-                SELECT clean_key FROM downloaded_tracks WHERE date_added >= ?
+                SELECT clean_key, artist, title FROM downloaded_tracks WHERE date_added >= ?
             """, (since,))
-            return {row["clean_key"] for row in cursor.fetchall()}
+            keys = set()
+            for row in cursor.fetchall():
+                if row["clean_key"]:
+                    keys.add(row["clean_key"])
+                if row["artist"] or row["title"]:
+                    keys.update(get_track_keys(row["artist"], row["title"]))
+            return keys
 
     def get_all_blacklist_keys(self) -> set[str]:
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT clean_key FROM discovery_blacklist")
-            return {row["clean_key"] for row in cursor.fetchall() if row["clean_key"]}
+            cursor = conn.execute("SELECT clean_key, artist, title FROM discovery_blacklist")
+            keys = set()
+            for row in cursor.fetchall():
+                if row["clean_key"]:
+                    keys.add(row["clean_key"])
+                if row["artist"] or row["title"]:
+                    keys.update(get_track_keys(row["artist"], row["title"]))
+            return keys
 
     def get_all_downloaded_keys(self) -> set[str]:
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT clean_key FROM downloaded_tracks")
-            return {row["clean_key"] for row in cursor.fetchall() if row["clean_key"]}
-
+            cursor = conn.execute("SELECT clean_key, artist, title FROM downloaded_tracks")
+            keys = set()
+            for row in cursor.fetchall():
+                if row["clean_key"]:
+                    keys.add(row["clean_key"])
+                if row["artist"] or row["title"]:
+                    keys.update(get_track_keys(row["artist"], row["title"]))
+            return keys
     def sync_deleted_files_to_blacklist(self, active_seed_keys: Optional[set[str]] = None) -> list[dict]:
         """
         Inspect all recorded downloads. If a physical file has been deleted by the user
@@ -257,7 +348,8 @@ class HistoryStore:
                 c_key = r["clean_key"]
 
                 # If user deleted the physical file and didn't re-star it
-                if not fpath.exists() and c_key not in active_keys:
+                track_keys = get_track_keys(r["artist"], r["title"])
+                if not fpath.exists() and c_key not in active_keys and not (track_keys & active_keys):
                     if not self.is_blacklisted(r["artist"], r["title"]):
                         self.blacklist(r["artist"], r["title"], reason="deleted_by_user")
                         blacklisted_now.append({"artist": r["artist"], "title": r["title"]})
