@@ -56,23 +56,27 @@ class SoulseekFlacProvider:
             return None
 
         exe = self.get_executable()
-        search_timeout_ms = (timeout or self.config.timeout_seconds) * 1000
-        queries_to_try = [
+        timeout_sec = timeout or self.config.timeout_seconds
+        search_timeout_ms = min(6000, timeout_sec * 1000)
+
+        # Deduplicate search queries
+        raw_queries = [
             self.clean_search_query(track.artist, track.title),
         ]
-        # If title has distinct subtitle/Romaji
         if " - " in track.title:
             parts = track.title.split(" - ", 1)
-            queries_to_try.append(self.clean_search_query(track.artist, parts[1].strip()))
-            queries_to_try.append(self.clean_search_query(track.artist, parts[0].strip()))
+            raw_queries.append(self.clean_search_query(track.artist, parts[1].strip()))
+            raw_queries.append(self.clean_search_query(track.artist, parts[0].strip()))
+
+        queries_to_try = []
+        for q in raw_queries:
+            if q and q not in queries_to_try:
+                queries_to_try.append(q)
 
         with tempfile.TemporaryDirectory(prefix="scout_slsk_") as tmpdir:
             tmp_out_dir = Path(tmpdir)
 
             for q in queries_to_try:
-                if not q:
-                    continue
-
                 cmd = [
                     exe,
                     q,
@@ -89,9 +93,12 @@ class SoulseekFlacProvider:
                     cmd.extend(["--pref-format", "flac"])
 
                 try:
-                    # Run sockseek process
-                    subprocess.run(cmd, capture_output=True, text=True, timeout=(timeout or self.config.timeout_seconds) + 15)
-
+                    subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_sec + 5,
+                    )
                     # Check if a .flac file was downloaded in tmp_out_dir
                     flac_files = list(tmp_out_dir.rglob("*.flac"))
                     valid_flacs = [
