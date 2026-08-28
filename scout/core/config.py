@@ -82,6 +82,15 @@ class NavidromeConfig:
     def get_expanded_db_path(self) -> Path:
         return Path(os.path.expanduser(self.db_path))
 
+@dataclass
+class SoulseekConfig:
+    enabled: bool = True
+    username: str = "scout_berkos_test"
+    password: str = "scout_pass_123"
+    cli_path: str = "/home/sevelebeci/.local/bin/sockseek"
+    timeout_seconds: int = 45
+    strict_flac: bool = True
+
 
 @dataclass
 class Config:
@@ -89,8 +98,8 @@ class Config:
     lastfm: LastFMConfig = field(default_factory=LastFMConfig)
     subsonic: SubsonicConfig = field(default_factory=SubsonicConfig)
     navidrome: NavidromeConfig = field(default_factory=NavidromeConfig)
+    soulseek: SoulseekConfig = field(default_factory=SoulseekConfig)
     config_path: Optional[Path] = None
-
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "Config":
         if path is None:
@@ -140,15 +149,25 @@ class Config:
                 config_path=nav_data.get("config_path", "~/.config/navidrome/navidrome.toml"),
                 db_path=nav_data.get("db_path", "~/.local/share/navidrome/navidrome.db"),
             )
+            slsk_data = data.get("soulseek", {})
+            soulseek = SoulseekConfig(
+                enabled=slsk_data.get("enabled", True),
+                username=slsk_data.get("username", "scout_berkos_test"),
+                password=slsk_data.get("password", "scout_pass_123"),
+                cli_path=slsk_data.get("cli_path", "/home/sevelebeci/.local/bin/sockseek"),
+                timeout_seconds=slsk_data.get("timeout_seconds", 45),
+                strict_flac=slsk_data.get("strict_flac", True),
+            )
 
             return cls(
                 general=general,
                 lastfm=lastfm,
                 subsonic=subsonic,
                 navidrome=navidrome,
+                soulseek=soulseek,
                 config_path=path,
             )
-        except Exception as e:
+        except Exception:
             # Fallback to default if corrupted
             return cls(config_path=path)
 
@@ -186,8 +205,15 @@ class Config:
             f'config_path = "{self.navidrome.config_path}"',
             f'db_path = "{self.navidrome.db_path}"',
             "",
+            "[soulseek]",
+            f"enabled = {str(self.soulseek.enabled).lower()}",
+            f'username = "{self.soulseek.username}"',
+            f'password = "{self.soulseek.password}"',
+            f'cli_path = "{self.soulseek.cli_path}"',
+            f"timeout_seconds = {self.soulseek.timeout_seconds}",
+            f"strict_flac = {str(self.soulseek.strict_flac).lower()}",
+            "",
         ]
-
         with open(target_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 

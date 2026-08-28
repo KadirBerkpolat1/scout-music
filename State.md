@@ -3,7 +3,7 @@
 **Son Güncelleme:** 2026-08-28  
 **Mimar:** Jony (Baş Yazılım Mimarı)  
 **Kullanıcı:** Berk  
-**Durum:** v1.0.1 — Çok Varyantlı Çiftleme Koruması (Multi-Variant Deduplication) & Fiziksel Disk Varlık Tespiti (29/29 Test Yeşil)
+**Durum:** v1.1.0 — Soulseek P2P Lossless FLAC Entegrasyonu & Toplu Kütüphane Yükseltici (32/32 Test Yeşil)
 
 ---
 
@@ -15,9 +15,10 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
 ## 2. Mimari Bileşenler & Modüller
 
 ### A. Çok Kaynaklı Kayıpsız İndirme Motoru (`scout/core/downloader.py` & `scout/providers/`)
+* **Soulseek P2P Kayıpsız FLAC Sağlayıcısı (`scout/providers/soulseek.py`):**
+  * Doğrudan Soulseek P2P ağı üzerinden 16-bit / 44.1 kHz CD FLAC ve 24-bit / 96–192 kHz Hi-Res stüdyo FLAC indirme motoru.
+  * Web sitelerindeki Cloudflare/Captcha engellerinden bağımsız saf TCP P2P akışı.
 * **Qobuz Hi-Res FLAC Sağlayıcısı (`scout/providers/qobuz.py`):**
-  * Spotube plugin tersine mühendisliği ile 24-bit / 192 kHz stüdyo master ve 16-bit / 44.1 kHz kayıpsız FLAC akış tespiti.
-  * Direct stream URL çözümleme ve Vorbis yorum / kapak görseli gömme.
 * **YouTube Music Stüdyo Sağlayıcısı (`scout/providers/ytmusic.py`):**
   * Qobuz'da bulunmayan parçalar ve özel yüklemeler için otomatik fallback.
   * Resmi stüdyo parçası eşleştirme (`artist - title` + süre toleransı).
@@ -53,7 +54,7 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
 * D-Bus MPRIS arayüzü üzerinden Feishin, Spotify, Clementine vb. anlık çalan parçayı okuma ve 1-komutla (`scout mpris`) anında benzer 10 keşif parçasını indirme.
 
 ### E. Arayüzler (`scout/cli.py` & `scout/tui/`)
-* **CLI:** `rich` tabloları, canlı ilerleme çubukları ve renkli teşhis çıktıları.
+* **CLI:** `rich` tabloları, canlı ilerleme çubukları, renkli teşhis çıktıları ve toplu FLAC yükseltme komutu (`scout upgrade`).
 * **TUI (`scout tui`):** `Textual` kütüphanesi ile geliştirilmiş tam ekran interaktif arayüz (arama, keşif üretici, indirme yöneticisi, ayar paneli).
 
 ---
@@ -63,9 +64,8 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
   * `test_dna.py` (DNA motoru, mood filtreleme, 2-hop keşif) ✅
   * `test_qobuz.py` (Kayıpsız FLAC akış tespiti ve indirme) ✅
   * `test_lastfm.py` (Similar tracks, artist top tracks, tag parsing) ✅
-  * `test_downloader.py`, `test_spotify.py`, `test_ytmusic.py` ✅
-  * `test_subsonic.py`, `test_mpris.py`, `test_dedupe.py`, `test_config.py`, `test_cli.py`, `test_models.py` ✅
-* **Sonuç:** Toplam **29/29 test %100 başarıyla geçti**.
+  * `test_subsonic.py`, `test_mpris.py`, `test_dedupe.py`, `test_config.py`, `test_cli.py`, `test_models.py`, `test_soulseek.py` ✅
+* **Sonuç:** Toplam **32/32 test %100 başarıyla geçti**.
 ---
 
 ## 4. Bekleyen Görevler (Roadmap)

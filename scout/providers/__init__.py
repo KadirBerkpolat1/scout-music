@@ -2,6 +2,7 @@
 
 from scout.providers.lastfm import LastFMProvider
 from scout.providers.qobuz import QobuzFlacProvider
+from scout.providers.soulseek import SoulseekFlacProvider
 from scout.providers.spotify import SpotifyProvider
 from scout.providers.ytmusic import YTMusicProvider
 
@@ -10,4 +11,5 @@ __all__ = [
     "YTMusicProvider",
     "LastFMProvider",
     "QobuzFlacProvider",
+    "SoulseekFlacProvider",
 ]

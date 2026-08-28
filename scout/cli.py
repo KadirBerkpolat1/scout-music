@@ -578,8 +578,77 @@ def cmd_stats(args, config: Config):
         for idx, r in enumerate(recent, 1):
             table.add_row(str(idx), r["artist"], r["title"], r.get("album") or "Single", r.get("audio_format", "mp3"), str(r.get("date_added", ""))[:19])
 
-        console.print(table)
+def cmd_upgrade(args, config: Config):
+    render_banner()
+    downloader = AudioDownloader(config=config)
+    scanner = NavidromeScanner(config=config.navidrome)
+    history = HistoryStore()
 
+    target_dir = Path(args.dir) if args.dir else config.general.music_dir
+    mp3_files = list(target_dir.rglob("*.mp3"))
+
+    if not mp3_files:
+        console.print("[yellow]No MP3 files found in music library to upgrade.[/yellow]")
+        return
+
+    console.print(f"[bold cyan]🔍 Found {len(mp3_files)} MP3 files in library. Starting Soulseek Lossless FLAC upgrade...[/bold cyan]\n")
+
+    upgraded_count = 0
+    kept_count = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+        main_task = progress.add_task(f"Upgrading library to FLAC ({len(mp3_files)} tracks)", total=len(mp3_files))
+
+        for idx, mp3_path in enumerate(mp3_files, 1):
+            stem = mp3_path.stem
+            if " - " in stem:
+                parts = stem.split(" - ", 1)
+                artist, title = parts[0].strip(), parts[1].strip()
+            else:
+                artist = mp3_path.parent.name
+                title = stem
+
+            track = Track(artist=artist, title=title)
+            progress.update(main_task, description=f"[{idx}/{len(mp3_files)}] Soulseek FLAC: {artist} - {title}")
+
+            try:
+                tmp_flac = downloader.soulseek.download_flac(track)
+                if tmp_flac and tmp_flac.exists() and tmp_flac.stat().st_size > 1024 * 1024:
+                    flac_dest = mp3_path.with_suffix(".flac")
+                    downloader.tag_file(tmp_flac, track, None)
+                    import shutil
+                    flac_dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(tmp_flac), str(flac_dest))
+                    if flac_dest.exists() and flac_dest.stat().st_size > 1024 * 1024:
+                        mp3_path.unlink(missing_ok=True)
+                        history.record_download(
+                            track=track,
+                            file_path=flac_dest,
+                            source_url="soulseek://p2p",
+                            audio_format="flac",
+                            bitrate="Lossless FLAC",
+                        )
+                        upgraded_count += 1
+                else:
+                    kept_count += 1
+            except Exception:
+                kept_count += 1
+
+            progress.advance(main_task)
+
+    console.print(f"\n[bold green]✔ Library Upgrade Complete![/bold green]")
+    console.print(f"  • Upgraded to True Lossless FLAC: [bold cyan]{upgraded_count}[/bold cyan]")
+    console.print(f"  • Kept as MP3 (not available on network): [bold yellow]{kept_count}[/bold yellow]")
+
+    if config.navidrome.scan_on_download:
+        scanner.trigger_scan()
+    notify("✨ Scout FLAC Upgrade Complete", f"Upgraded {upgraded_count} tracks to lossless FLAC!")
 
 def cmd_watch(args, config: Config):
     render_banner()
@@ -671,6 +740,8 @@ def main():
     p_mpris.add_argument("-f", "--force", action="store_true", help="Force re-download existing tracks")
     p_watch = subparsers.add_parser("watch", help="Background watcher daemon for starred songs & seed changes")
     p_watch.add_argument("--interval", type=int, default=30, help="Check interval in seconds")
+    p_upgrade = subparsers.add_parser("upgrade", help="Batch upgrade existing MP3 tracks in library to Soulseek Lossless FLAC")
+    p_upgrade.add_argument("--dir", help="Custom target directory to scan")
 
     # stats
     subparsers.add_parser("stats", help="View archive statistics and recent downloads")
@@ -710,6 +781,8 @@ def main():
         cmd_stats(args, config)
     elif args.command == "tui":
         cmd_tui(args, config)
+    elif args.command == "upgrade":
+        cmd_upgrade(args, config)
 
 
 if __name__ == "__main__":

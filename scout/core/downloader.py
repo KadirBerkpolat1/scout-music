@@ -27,7 +27,7 @@ from scout.core.config import Config, load_config
 from scout.core.dedupe import HistoryStore
 from scout.core.models import DownloadResult, Track
 from scout.providers.qobuz import QobuzFlacProvider
-
+from scout.providers.soulseek import SoulseekFlacProvider
 def sanitize_filename(name: str) -> str:
     """Clean filename of illegal characters across Linux, macOS, and Windows."""
     clean = re.sub(r'[\\/*?:"<>|]', "", name)
@@ -41,11 +41,12 @@ class AudioDownloader:
         config: Optional[Config] = None,
         history_store: Optional[HistoryStore] = None,
         qobuz_provider: Optional[QobuzFlacProvider] = None,
+        soulseek_provider: Optional[SoulseekFlacProvider] = None,
     ):
         self.config = config or load_config()
         self.history = history_store or HistoryStore()
         self.qobuz = qobuz_provider or QobuzFlacProvider()
-
+        self.soulseek = soulseek_provider or SoulseekFlacProvider(config=self.config.soulseek)
     def resolve_destination_path(self, track: Track, target_dir: Optional[Path] = None) -> Path:
         base_dir = target_dir or self.config.general.music_dir
         ext = self.config.general.audio_format.lower()
@@ -259,8 +260,33 @@ class AudioDownloader:
                 )
 
         dest_path = self.resolve_destination_path(track, target_dir)
-        # 1. Attempt True Lossless FLAC download via Qobuz if lossless_first or format is flac
+        # 1. Attempt True Lossless FLAC download via Soulseek P2P or Qobuz
         if self.config.general.lossless_first or self.config.general.audio_format.lower() == "flac":
+            # A. Soulseek P2P Lossless FLAC
+            try:
+                tmp_flac = self.soulseek.download_flac(track)
+                if tmp_flac and tmp_flac.exists() and tmp_flac.stat().st_size > 1024 * 1024:
+                    flac_dest = dest_path.with_suffix(".flac")
+                    cover_bytes = self.download_cover_bytes(track.cover_url)
+                    self.tag_file(tmp_flac, track, cover_bytes)
+                    flac_dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(tmp_flac), str(flac_dest))
+                    self.history.record_download(
+                        track=track,
+                        file_path=flac_dest,
+                        source_url="soulseek://p2p",
+                        audio_format="flac",
+                        bitrate="Lossless FLAC",
+                    )
+                    return DownloadResult(
+                        success=True,
+                        file_path=flac_dest,
+                        track=track,
+                    )
+            except Exception:
+                pass
+
+            # B. Qobuz Hi-Res FLAC fallback
             try:
                 stream_info = self.qobuz.resolve_flac_stream(track)
                 if stream_info and stream_info.get("download_url"):
