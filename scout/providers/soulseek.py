@@ -75,21 +75,25 @@ class SoulseekFlacProvider:
         if not self.is_available():
             return None
 
+        import random
         exe = self.get_executable()
         timeout_sec = timeout or self.config.timeout_seconds
-        search_timeout_ms = min(6000, timeout_sec * 1000)
+        search_timeout_ms = min(8000, timeout_sec * 1000)
         queries_to_try = self.generate_search_queries(track.artist, track.title)
+        worker_user = f"{self.config.username}_{random.randint(1000, 9999)}"
+
         with tempfile.TemporaryDirectory(prefix="scout_slsk_") as tmpdir:
             tmp_out_dir = Path(tmpdir)
 
             for q in queries_to_try:
                 cmd = [
+                    exe,
                     q,
                     "--song",
                     "--extract-artist",
                     "-d",
                     "--no-listen",
-                    "--user", self.config.username,
+                    "--user", worker_user,
                     "--pass", self.config.password,
                     "-o", str(tmp_out_dir),
                     "--search-timeout", str(search_timeout_ms),
@@ -105,7 +109,7 @@ class SoulseekFlacProvider:
                         cmd,
                         capture_output=True,
                         text=True,
-                        timeout=timeout_sec + 5,
+                        timeout=timeout_sec + 20,
                     )
                     # Check if a .flac file was downloaded in tmp_out_dir
                     flac_files = list(tmp_out_dir.rglob("*.flac"))

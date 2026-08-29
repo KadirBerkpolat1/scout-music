@@ -88,7 +88,7 @@ class SoulseekConfig:
     username: str = "scout_berkos_test"
     password: str = "scout_pass_123"
     cli_path: str = "/home/sevelebeci/.local/bin/sockseek"
-    timeout_seconds: int = 10
+    timeout_seconds: int = 25
     strict_flac: bool = True
 
 
@@ -155,7 +155,7 @@ class Config:
                 username=slsk_data.get("username", "scout_berkos_test"),
                 password=slsk_data.get("password", "scout_pass_123"),
                 cli_path=slsk_data.get("cli_path", "/home/sevelebeci/.local/bin/sockseek"),
-                timeout_seconds=slsk_data.get("timeout_seconds", 10),
+                timeout_seconds=slsk_data.get("timeout_seconds", 25),
                 strict_flac=slsk_data.get("strict_flac", True),
             )
 
