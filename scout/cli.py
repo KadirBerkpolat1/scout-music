@@ -644,15 +644,31 @@ def cmd_upgrade(args, config: Config):
             mp3_path, track = item
             display = f"{track.artist} - {track.title}"
 
-            worker_task = progress.add_task(f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [yellow]🔍 Aranıyor...[/yellow]", total=100, completed=15)
+            worker_task = progress.add_task(
+                f"  [dim]•[/dim] [cyan]{display[:30]}[/cyan] [yellow]🔍 Aranıyor...[/yellow]",
+                total=100,
+                completed=10,
+            )
+
+            def on_progress(curr_bytes: int, _):
+                curr_mb = curr_bytes / (1024 * 1024)
+                pct = min(92, int(15 + (curr_mb / 32.0) * 75))
+                progress.update(
+                    worker_task,
+                    completed=pct,
+                    description=f"  [dim]•[/dim] [cyan]{display[:28]}[/cyan] [blue]⬇ FLAC İndiriliyor ({curr_mb:.1f} MB)[/blue]",
+                )
 
             try:
-                progress.update(worker_task, completed=40, description=f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [blue]⬇ FLAC İndiriliyor...[/blue]")
-                tmp_flac = downloader.soulseek.download_flac(track)
+                tmp_flac = downloader.soulseek.download_flac(track, progress_hook=on_progress)
 
                 if tmp_flac and tmp_flac.exists() and tmp_flac.stat().st_size > 1024 * 1024:
                     size_mb = tmp_flac.stat().st_size / (1024 * 1024)
-                    progress.update(worker_task, completed=90, description=f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [magenta]🏷️ Etiketleniyor...[/magenta]")
+                    progress.update(
+                        worker_task,
+                        completed=96,
+                        description=f"  [dim]•[/dim] [cyan]{display[:28]}[/cyan] [magenta]🏷️ Etiketleniyor ({size_mb:.1f} MB)...[/magenta]",
+                    )
                     flac_dest = mp3_path.with_suffix(".flac")
                     downloader.tag_file(tmp_flac, track, None)
                     flac_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -669,21 +685,32 @@ def cmd_upgrade(args, config: Config):
                                 bitrate="Lossless FLAC",
                             )
                             upgraded_count += 1
-                        progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [green]✔ Yükseltildi:[/green] [cyan]{display[:32]}[/cyan] [dim]({size_mb:.1f} MB)[/dim]")
+                        progress.update(
+                            worker_task,
+                            completed=100,
+                            description=f"  [dim]•[/dim] [green]✔ Yükseltildi:[/green] [cyan]{display[:28]}[/cyan] [bold cyan]({size_mb:.1f} MB)[/bold cyan]",
+                        )
                 else:
                     with lock:
                         kept_count += 1
-                    progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:32]}[/dim]")
+                    progress.update(
+                        worker_task,
+                        completed=100,
+                        description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:28]}[/dim]",
+                    )
             except Exception:
                 with lock:
                     kept_count += 1
-                progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:32]}[/dim]")
+                progress.update(
+                    worker_task,
+                    completed=100,
+                    description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:28]}[/dim]",
+                )
             finally:
                 with lock:
                     progress.advance(overall_task)
                 time.sleep(1.0)
                 progress.remove_task(worker_task)
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
             list(executor.map(process_track, track_items))
 

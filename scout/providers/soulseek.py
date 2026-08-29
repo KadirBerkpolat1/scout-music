@@ -79,6 +79,7 @@ class SoulseekFlacProvider:
         self,
         track: Track,
         timeout: Optional[int] = None,
+        progress_hook: Optional[any] = None,
     ) -> Optional[Path]:
         """
         Search Soulseek for the track, download genuine lossless FLAC into a temp file,
@@ -117,19 +118,33 @@ class SoulseekFlacProvider:
                     cmd.extend(["--pref-format", "flac"])
 
                 try:
-                    subprocess.run(
+                    import time
+                    proc = subprocess.Popen(
                         cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout_sec + 8,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                     )
-                    # Check if a .flac file was downloaded in tmp_out_dir
+
+                    start_t = time.time()
+                    max_wait = timeout_sec + 8
+
+                    while proc.poll() is None:
+                        files = list(tmp_out_dir.rglob("*.flac*"))
+                        if files and progress_hook:
+                            curr_bytes = max((f.stat().st_size for f in files if f.is_file()), default=0)
+                            if curr_bytes > 0:
+                                progress_hook(curr_bytes, 0)
+
+                        time.sleep(0.3)
+                        if time.time() - start_t > max_wait:
+                            proc.kill()
+                            break
+
                     flac_files = list(tmp_out_dir.rglob("*.flac"))
                     valid_flacs = [
                         f for f in flac_files
                         if f.is_file() and f.stat().st_size > 1024 * 1024 and not f.name.endswith(".incomplete")
                     ]
-
                     if valid_flacs:
                         valid_flacs.sort(key=lambda p: p.stat().st_size, reverse=True)
                         best_flac = valid_flacs[0]

@@ -35,14 +35,16 @@ def test_soulseek_download_mock(tmp_path: Path):
 
     track = Track(title="Show", artist="Ado")
 
-    with patch("subprocess.run") as mock_run:
-        def fake_run(cmd, **kwargs):
+    with patch("subprocess.Popen") as mock_popen:
+        def fake_popen(cmd, **kwargs):
             out_dir = Path(cmd[cmd.index("-o") + 1])
             fake_flac = out_dir / "Ado - Show.flac"
             fake_flac.write_bytes(b"fLaC" + b"\x00" * (1024 * 1024 * 2))
-            return MagicMock(returncode=0)
-
-        mock_run.side_effect = fake_run
+            proc = MagicMock()
+            proc.poll.return_value = 0
+            proc.returncode = 0
+            return proc
+        mock_popen.side_effect = fake_popen
         res_path = provider.download_flac(track)
         assert res_path is not None
         assert res_path.exists()
