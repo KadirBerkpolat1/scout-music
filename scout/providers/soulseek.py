@@ -42,27 +42,39 @@ class SoulseekFlacProvider:
         return re.sub(r"\s+", " ", query).strip()
 
     def generate_search_queries(self, artist: str, title: str) -> list[str]:
-        from scout.core.dedupe import extract_artists, extract_title_variants
+        from scout.core.dedupe import extract_title_variants
+
+        clean_artist = re.sub(r",.*|\s+feat\..*|\s+ft\..*|\s*&.*", "", artist, flags=re.IGNORECASE).strip()
+        clean_artist = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", clean_artist)
+        clean_artist = re.sub(r"\s+", " ", clean_artist).strip()
+
+        title_variants = extract_title_variants(title)
         queries = []
-        artists = extract_artists(artist)
-        titles = extract_title_variants(title)
 
-        for a in artists[:2]:
-            clean_a = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", a).strip()
-            clean_a = re.sub(r"\s+", " ", clean_a).strip()
-            for t in titles:
-                clean_t = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", t).strip()
-                clean_t = re.sub(r"\s+", " ", clean_t).strip()
-                if clean_a and clean_t:
-                    q_hyphen = f"{clean_a} - {clean_t}"
-                    if q_hyphen not in queries:
-                        queries.append(q_hyphen)
-                    q_plain = f"{clean_a} {clean_t}"
-                    if q_plain not in queries:
-                        queries.append(q_plain)
+        # 1. First priority: Pure Latin/English title variant if available
+        latin_titles = [t for t in title_variants if re.search(r"[a-zA-Z]", t) and not re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", t)]
+        if latin_titles:
+            best_latin = latin_titles[-1]
+            clean_t = re.sub(r"[^a-zA-Z0-9\s]", " ", best_latin)
+            clean_t = re.sub(r"\s+", " ", clean_t).strip()
+            if clean_artist and clean_t:
+                queries.append(f"{clean_artist} - {clean_t}")
 
-        return queries or [f"{artist} - {title}"]
+        # 2. Second priority: Clean full title without parentheticals
+        clean_full = re.sub(r"\s*[\(\[\{].*?[\)\]\}]", "", title).strip()
+        if " - " in clean_full:
+            clean_full = clean_full.split(" - ", 1)[0].strip()
+        clean_full = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", clean_full)
+        clean_full = re.sub(r"\s+", " ", clean_full).strip()
+        if clean_artist and clean_full:
+            q = f"{clean_artist} - {clean_full}"
+            if q not in queries:
+                queries.append(q)
 
+        if not queries:
+            queries.append(f"{clean_artist} - {title}")
+
+        return queries[:2]
     def download_flac(
         self,
         track: Track,
@@ -78,7 +90,7 @@ class SoulseekFlacProvider:
         import random
         exe = self.get_executable()
         timeout_sec = timeout or self.config.timeout_seconds
-        search_timeout_ms = min(8000, timeout_sec * 1000)
+        search_timeout_ms = min(4000, timeout_sec * 1000)
         queries_to_try = self.generate_search_queries(track.artist, track.title)
         worker_user = f"{self.config.username}_{random.randint(1000, 9999)}"
 
@@ -109,7 +121,7 @@ class SoulseekFlacProvider:
                         cmd,
                         capture_output=True,
                         text=True,
-                        timeout=timeout_sec + 20,
+                        timeout=timeout_sec + 8,
                     )
                     # Check if a .flac file was downloaded in tmp_out_dir
                     flac_files = list(tmp_out_dir.rglob("*.flac"))
