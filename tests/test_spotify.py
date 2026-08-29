@@ -60,3 +60,59 @@ def test_parse_track_embed_json():
     assert track.duration_seconds == 248
     assert track.year == "2013"
     assert "sample" in track.cover_url
+
+
+def test_parse_playlist_embed_json():
+    provider = SpotifyProvider()
+    fake_embed_html = """
+    <html>
+      <head>
+        <script id="__NEXT_DATA__" type="application/json">
+        {
+          "props": {
+            "pageProps": {
+              "state": {
+                "data": {
+                  "entity": {
+                    "title": "Epic Rock Playlist",
+                    "subtitle": "Best classic and alternative rock",
+                    "visualIdentity": {
+                      "image": [{"url": "https://image.spotify.com/cover640"}]
+                    },
+                    "trackList": [
+                      {
+                        "title": "Bohemian Rhapsody",
+                        "subtitle": "Queen",
+                        "duration": 354000,
+                        "uri": "spotify:track:4u7EnebtmKWzUH433cf5Qv"
+                      },
+                      {
+                        "title": "Hotel California",
+                        "subtitle": "Eagles",
+                        "duration": 391000,
+                        "uri": "spotify:track:59wf2gXgGf4DqR3L01H89h"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+        </script>
+      </head>
+    </html>
+    """
+    pl = provider._parse_playlist_embed(fake_embed_html, "test_playlist_id")
+    assert pl is not None
+    assert pl.title == "Epic Rock Playlist"
+    assert pl.description == "Best classic and alternative rock"
+    assert pl.cover_url == "https://image.spotify.com/cover640"
+    assert len(pl.tracks) == 2
+    assert pl.tracks[0].title == "Bohemian Rhapsody"
+    assert pl.tracks[0].artist == "Queen"
+    assert pl.tracks[0].track_num == 1
+    assert pl.tracks[0].duration_seconds == 354
+    assert pl.tracks[1].title == "Hotel California"
+    assert pl.tracks[1].artist == "Eagles"
+    assert pl.tracks[1].track_num == 2

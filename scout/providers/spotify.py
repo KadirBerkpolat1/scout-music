@@ -5,7 +5,7 @@ import re
 from typing import Optional, Union
 import requests
 
-from scout.core.models import Album, Track
+from scout.core.models import Album, Playlist, Track
 
 HEADERS = {
     "User-Agent": (
@@ -282,40 +282,84 @@ class SpotifyProvider:
             pass
         return None
 
-    def get_playlist_tracks(self, url: str) -> list[Track]:
+    def get_playlist(self, url: str) -> Optional[Playlist]:
         entity_type, item_id = self.parse_url_type(url)
-        if entity_type != "playlist" and not entity_type:
-            return []
-        tracks: list[Track] = []
-        if item_id:
-            embed_html = self.fetch_embed_content("playlist", item_id)
-            if embed_html:
-                try:
-                    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', embed_html, re.DOTALL)
-                    if match:
-                        data = json.loads(match.group(1))
-                        entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
-                        raw_tracks = entity.get("trackList", [])
-                        for idx, t in enumerate(raw_tracks, 1):
-                            t_name = t.get("title", "") or t.get("name", "")
-                            t_artists = t.get("artists", [])
-                            t_artist = ", ".join(a.get("name", "") for a in t_artists if a.get("name"))
-                            t_dur = t.get("duration", 0) // 1000
-                            t_id = t.get("uri", "").split(":")[-1] if "uri" in t else ""
-                            t_cover = ""
-                            if "album" in t and "images" in t["album"] and t["album"]["images"]:
-                                t_cover = t["album"]["images"][0].get("url", "")
-                            tracks.append(
-                                Track(
-                                    title=t_name,
-                                    artist=t_artist or "Unknown Artist",
-                                    track_num=idx,
-                                    duration_seconds=t_dur,
-                                    cover_url=t_cover,
-                                    source_url=f"https://open.spotify.com/track/{t_id}" if t_id else "",
-                                    spotify_id=t_id,
-                                )
-                            )
-                except Exception:
-                    pass
-        return tracks
+        if entity_type != "playlist" or not item_id:
+            return None
+        embed_html = self.fetch_embed_content("playlist", item_id)
+        if embed_html:
+            pl = self._parse_playlist_embed(embed_html, item_id)
+            if pl and pl.tracks:
+                return pl
+        return None
+
+    def _parse_playlist_embed(self, html: str, item_id: str) -> Optional[Playlist]:
+        try:
+            match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+            if not match:
+                return None
+            data = json.loads(match.group(1))
+            entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+            if not entity:
+                return None
+
+            title = entity.get("title") or entity.get("name") or "Spotify Playlist"
+            desc = (entity.get("subtitle") or entity.get("description") or "").replace("\xa0", " ").strip()
+
+            # High-res cover image resolution
+            cover_url = ""
+            visual_images = entity.get("visualIdentity", {}).get("image", [])
+            if visual_images:
+                cover_url = visual_images[-1].get("url", "")
+            if not cover_url:
+                cover_sources = entity.get("coverArt", {}).get("sources", [])
+                if cover_sources:
+                    cover_url = cover_sources[-1].get("url", "")
+            if not cover_url and entity.get("images"):
+                cover_url = entity["images"][0].get("url", "")
+
+            tracks: list[Track] = []
+            raw_tracks = entity.get("trackList", [])
+            for idx, t in enumerate(raw_tracks, 1):
+                t_name = t.get("title", "") or t.get("name", "")
+                t_subtitle = (t.get("subtitle", "") or "").replace("\xa0", " ").strip()
+                t_artists = t.get("artists", [])
+                t_artist = ", ".join(a.get("name", "") for a in t_artists if a.get("name"))
+                if not t_artist and t_subtitle:
+                    t_artist = t_subtitle
+
+                t_dur = t.get("duration", 0) // 1000
+                t_id = t.get("uri", "").split(":")[-1] if "uri" in t else ""
+                t_cover = ""
+                if "album" in t and "images" in t["album"] and t["album"]["images"]:
+                    t_cover = t["album"]["images"][0].get("url", "")
+                elif cover_url:
+                    t_cover = cover_url
+
+                tracks.append(
+                    Track(
+                        title=t_name,
+                        artist=t_artist or "Unknown Artist",
+                        track_num=idx,
+                        duration_seconds=t_dur,
+                        cover_url=t_cover,
+                        source_url=f"https://open.spotify.com/track/{t_id}" if t_id else "",
+                        spotify_id=t_id,
+                    )
+                )
+
+            return Playlist(
+                title=title,
+                tracks=tracks,
+                description=desc,
+                cover_url=cover_url,
+                source_url=f"https://open.spotify.com/playlist/{item_id}",
+                spotify_id=item_id,
+            )
+        except Exception:
+            pass
+        return None
+
+    def get_playlist_tracks(self, url: str) -> list[Track]:
+        pl = self.get_playlist(url)
+        return pl.tracks if pl else []

@@ -16,7 +16,7 @@ from rich.table import Table
 from scout.core.config import Config, load_config
 from scout.core.dedupe import HistoryStore
 from scout.core.downloader import AudioDownloader
-from scout.core.models import Track
+from scout.core.models import Playlist, Track
 from scout.dna.engine import PlaylistDNAEngine
 from scout.integrations.mpris import get_current_playing_track
 from scout.integrations.navidrome import NavidromeScanner
@@ -62,8 +62,11 @@ def resolve_track_from_input(
                         yt_track.year = sp_track.year
                     return yt_track
                 return sp_track
-        elif entity_type in ("album", "playlist"):
-            console.print(f"[yellow]Provided URL is a Spotify {entity_type}. Use 'scout album' to download whole albums.[/yellow]")
+        elif entity_type == "album":
+            console.print("[yellow]Provided URL is a Spotify album. Use 'scout album <URL>' to download complete albums.[/yellow]")
+            return None
+        elif entity_type == "playlist":
+            console.print("[yellow]Provided URL is a Spotify playlist. Use 'scout playlist <URL>' to download complete playlists.[/yellow]")
             return None
 
     # 2. Check if YouTube URL
@@ -245,6 +248,102 @@ def cmd_album(args, config: Config):
         scanner.trigger_scan()
     notify("💿 Album Download Complete", f"{album_obj.artist} - {album_obj.title} ({success_count} tracks)")
 
+
+def cmd_playlist(args, config: Config):
+    render_banner()
+    downloader = AudioDownloader(config=config)
+    spotify = SpotifyProvider()
+    ytm = YTMusicProvider()
+    scanner = NavidromeScanner(config=config.navidrome)
+
+    target_dir = Path(args.dir) if args.dir else config.general.music_dir
+
+    playlist_obj: Optional[Playlist] = None
+
+    if SpotifyProvider.is_spotify_url(args.query):
+        with console.status("[bold green]Parsing Spotify playlist tracklist & metadata...[/bold green]"):
+            playlist_obj = spotify.get_playlist(args.query)
+
+    if not playlist_obj or not playlist_obj.tracks:
+        console.print("[red]❌ Could not find or parse Spotify playlist.[/red]")
+        sys.exit(1)
+
+    console.print(Panel(
+        f"[bold cyan]Playlist:[/bold cyan] {playlist_obj.title}\n"
+        f"[bold cyan]Description:[/bold cyan] {playlist_obj.description or 'N/A'}\n"
+        f"[bold cyan]Tracks:[/bold cyan] {len(playlist_obj.tracks)} tracks\n"
+        f"[bold cyan]Target Dir:[/bold cyan] {target_dir}",
+        title="🎵 Spotify Playlist Details",
+        border_style="cyan"
+    ))
+
+    force = getattr(args, "force", False)
+    processed_count = 0
+    downloaded_paths: list[tuple[Track, Path]] = []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        main_task = progress.add_task(f"Processing playlist ({len(playlist_obj.tracks)} tracks)", total=len(playlist_obj.tracks))
+
+        for idx, t in enumerate(playlist_obj.tracks, 1):
+            progress.update(main_task, description=f"[{idx}/{len(playlist_obj.tracks)}] {t.display_name}")
+
+            # Collision / Duplicate check: If track exists on disk/library and not forcing
+            if not force:
+                existing = downloader.is_track_already_present(t, target_dir)
+                if existing:
+                    processed_count += 1
+                    downloaded_paths.append((t, existing))
+                    progress.advance(main_task)
+                    continue
+
+            # Ensure video_id is resolved
+            if not t.video_id:
+                matched = ytm.search_track(t.artist, t.title)
+                if matched and matched.video_id:
+                    t.video_id = matched.video_id
+                    if not t.cover_url and matched.cover_url:
+                        t.cover_url = matched.cover_url
+                    if matched.album and matched.album != "Single" and (not t.album or t.album == "Single"):
+                        t.album = matched.album
+                    if matched.year and not t.year:
+                        t.year = matched.year
+
+            res = downloader.download_track(t, target_dir=target_dir, overwrite=force)
+            if res.success and res.file_path:
+                processed_count += 1
+                downloaded_paths.append((t, res.file_path))
+            progress.advance(main_task)
+
+    console.print(f"[bold green]✔ Successfully processed {processed_count}/{len(playlist_obj.tracks)} tracks![/bold green]")
+
+    # Generate .m3u8 playlist file if requested
+    no_m3u = getattr(args, "no_m3u", False)
+    if not no_m3u and downloaded_paths:
+        from scout.core.downloader import sanitize_filename
+        safe_name = sanitize_filename(playlist_obj.title) or "Spotify Playlist"
+        playlists_dir = target_dir / "Playlists" if target_dir != config.general.music_dir else config.general.music_dir / "Playlists"
+        playlists_dir.mkdir(parents=True, exist_ok=True)
+        m3u8_path = playlists_dir / f"{safe_name}.m3u8"
+
+        with open(m3u8_path, "w", encoding="utf-8") as f:
+            f.write("#EXTM3U\n")
+            f.write(f"#PLAYLIST:{playlist_obj.title}\n")
+            for trk, pth in downloaded_paths:
+                f.write(f"#EXTINF:{trk.duration_seconds},{trk.display_name}\n")
+                f.write(f"{pth.resolve()}\n")
+
+        console.print(f"[bold cyan]📄 Created Playlist File:[/bold cyan] {m3u8_path}")
+
+    if config.navidrome.scan_on_download:
+        scanner.trigger_scan()
+    notify("🎵 Playlist Download Complete", f"{playlist_obj.title} ({processed_count} tracks)")
 
 def cmd_artist(args, config: Config):
     render_banner()
@@ -784,6 +883,13 @@ def main():
     p_album.add_argument("--dir", help="Custom target directory")
     p_album.add_argument("-f", "--force", action="store_true", help="Force re-download existing album tracks")
 
+
+    # playlist
+    p_playlist = subparsers.add_parser("playlist", help="Download complete playlist from Spotify URL and generate .m3u8")
+    p_playlist.add_argument("query", help="Playlist URL or Spotify playlist link")
+    p_playlist.add_argument("--dir", help="Custom target directory")
+    p_playlist.add_argument("-f", "--force", action="store_true", help="Force re-download existing playlist tracks")
+    p_playlist.add_argument("--no-m3u", action="store_true", help="Skip generating .m3u8 playlist file")
     # artist
     p_artist = subparsers.add_parser("artist", help="List and download artist discography albums")
     p_artist.add_argument("artist", help="Artist Name")
@@ -841,6 +947,8 @@ def main():
         cmd_add(args, config)
     elif args.command == "album":
         cmd_album(args, config)
+    elif args.command == "playlist":
+        cmd_playlist(args, config)
     elif args.command == "artist":
         cmd_artist(args, config)
     elif args.command == "radio":

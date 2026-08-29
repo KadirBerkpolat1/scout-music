@@ -1,9 +1,9 @@
 # Scout (`scout-music`) — Project State & Architectural Blueprint
 
-**Son Güncelleme:** 2026-08-28  
+**Son Güncelleme:** 2026-08-29  
 **Mimar:** Jony (Baş Yazılım Mimarı)  
 **Kullanıcı:** Berk  
-**Durum:** v1.1.0 — Soulseek P2P Lossless FLAC Entegrasyonu & Toplu Kütüphane Yükseltici (32/32 Test Yeşil)
+**Durum:** v1.2.0 — Spotify Çalma Listesi İndirme & Otomatik .m3u8 Üretimi (33/33 Test Yeşil)
 
 ---
 
@@ -22,8 +22,9 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
 * **YouTube Music Stüdyo Sağlayıcısı (`scout/providers/ytmusic.py`):**
   * Qobuz'da bulunmayan parçalar ve özel yüklemeler için otomatik fallback.
   * Resmi stüdyo parçası eşleştirme (`artist - title` + süre toleransı).
-* **Spotify Metadata Ayrıştırıcı (`scout/providers/spotify.py`):**
+* **Spotify Metadata & Çalma Listesi Ayrıştırıcı (`scout/providers/spotify.py`):**
   * Sıfır API anahtarı gerektiren açık uç nokta ayrıştırması (parçalar, albümler, çalma listeleri) ve 640x640 yüksek çözünürlüklü kapak CDN'i.
+  * Tam Spotify Çalma Listesi desteği (`scout playlist <URL>`): Parça listesi, alt sanatçı/düet çözümlemesi, albüm kapakları ve otomatik `.m3u8` çalma listesi dosyası üretimi.
 * **Stüdyo Kalitesinde Etiketleme (`Mutagen`):**
   * MP3: `TIT2`, `TPE1`, `TALB`, `TRCK`, `TDRC`, `APIC` ID3v2.4 etiketleri.
   * FLAC: Tam Vorbis Comment + FLAC Picture bloğu.
@@ -54,7 +55,7 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
 * D-Bus MPRIS arayüzü üzerinden Feishin, Spotify, Clementine vb. anlık çalan parçayı okuma ve 1-komutla (`scout mpris`) anında benzer 10 keşif parçasını indirme.
 
 ### E. Arayüzler (`scout/cli.py` & `scout/tui/`)
-* **CLI:** `rich` tabloları, canlı ilerleme çubukları, renkli teşhis çıktıları ve toplu FLAC yükseltme komutu (`scout upgrade`).
+* **CLI:** `rich` tabloları, canlı ilerleme çubukları, renkli teşhis çıktıları, Spotify çalma listesi indirme (`scout playlist`) ve toplu FLAC yükseltme komutu (`scout upgrade`).
 * **TUI (`scout tui`):** `Textual` kütüphanesi ile geliştirilmiş tam ekran interaktif arayüz (arama, keşif üretici, indirme yöneticisi, ayar paneli).
 
 ---
@@ -65,7 +66,7 @@ Scout (`scout-music`); müzik tutkunları, arşivciler ve self-hoster'lar için 
   * `test_qobuz.py` (Kayıpsız FLAC akış tespiti ve indirme) ✅
   * `test_lastfm.py` (Similar tracks, artist top tracks, tag parsing) ✅
   * `test_subsonic.py`, `test_mpris.py`, `test_dedupe.py`, `test_config.py`, `test_cli.py`, `test_models.py`, `test_soulseek.py` ✅
-* **Sonuç:** Toplam **32/32 test %100 başarıyla geçti**.
+* **Sonuç:** Toplam **33/33 test %100 başarıyla geçti**.
 ---
 
 ## 4. Bekleyen Görevler (Roadmap)

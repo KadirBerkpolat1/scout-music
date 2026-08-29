@@ -121,3 +121,13 @@ class DownloadResult:
     track: Optional[Track] = None
     already_exists: bool = False
     error: Optional[str] = None
+
+
+@dataclass
+class Playlist:
+    title: str
+    tracks: list[Track] = field(default_factory=list)
+    description: str = ""
+    cover_url: str = ""
+    source_url: str = ""
+    spotify_id: str = ""

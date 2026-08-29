@@ -71,6 +71,10 @@ scout add "Daft Punk - Get Lucky"
 scout album "https://open.spotify.com/album/4m28RiFD02VwKyEIMvrFsj"
 scout album "Daft Punk - Random Access Memories"
 
+
+# Download complete Spotify playlist and auto-generate .m3u8 playlist file
+scout playlist "https://open.spotify.com/playlist/3fi9syctgNWwaLvY4Lflg4"
+scout playlist "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" --dir "~/Music/FNAF"
 # Download artist discography
 scout artist "Daft Punk"
 
