@@ -87,13 +87,10 @@ class SoulseekFlacProvider:
         """
         if not self.is_available():
             return None
-
-        import random
         exe = self.get_executable()
         timeout_sec = timeout or self.config.timeout_seconds
-        search_timeout_ms = min(4000, timeout_sec * 1000)
+        search_timeout_ms = min(5000, timeout_sec * 1000)
         queries_to_try = self.generate_search_queries(track.artist, track.title)
-        worker_user = f"{self.config.username}_{random.randint(1000, 9999)}"
 
         with tempfile.TemporaryDirectory(prefix="scout_slsk_") as tmpdir:
             tmp_out_dir = Path(tmpdir)
@@ -106,7 +103,7 @@ class SoulseekFlacProvider:
                     "--extract-artist",
                     "-d",
                     "--no-listen",
-                    "--user", worker_user,
+                    "--user", self.config.username,
                     "--pass", self.config.password,
                     "-o", str(tmp_out_dir),
                     "--search-timeout", str(search_timeout_ms),

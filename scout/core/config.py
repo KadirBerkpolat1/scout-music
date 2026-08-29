@@ -44,7 +44,7 @@ class GeneralConfig:
     audio_format: str = "mp3"  # "mp3", "flac", "opus"
     bitrate: str = "320k"
     folder_template: str = "{artist}/{album}/{track_num:02d} - {title}"
-    lossless_first: bool = True  # Try Qobuz Hi-Res FLAC before YouTube Music
+    lossless_first: bool = False  # Try Qobuz/Lossless FLAC before YouTube Music Studio
     def __post_init__(self):
         if isinstance(self.music_dir, str):
             self.music_dir = Path(os.path.expanduser(self.music_dir))
@@ -84,7 +84,7 @@ class NavidromeConfig:
 
 @dataclass
 class SoulseekConfig:
-    enabled: bool = True
+    enabled: bool = False
     username: str = "scout_berkos_test"
     password: str = "scout_pass_123"
     cli_path: str = "/home/sevelebeci/.local/bin/sockseek"
@@ -122,7 +122,7 @@ class Config:
                 audio_format=gen_data.get("audio_format", "mp3"),
                 bitrate=gen_data.get("bitrate", "320k"),
                 folder_template=gen_data.get("folder_template", "{artist}/{album}/{track_num:02d} - {title}"),
-                lossless_first=gen_data.get("lossless_first", True),
+                lossless_first=gen_data.get("lossless_first", False),
             )
 
             lfm_data = data.get("lastfm", {})
@@ -151,7 +151,7 @@ class Config:
             )
             slsk_data = data.get("soulseek", {})
             soulseek = SoulseekConfig(
-                enabled=slsk_data.get("enabled", True),
+                enabled=slsk_data.get("enabled", False),
                 username=slsk_data.get("username", "scout_berkos_test"),
                 password=slsk_data.get("password", "scout_pass_123"),
                 cli_path=slsk_data.get("cli_path", "/home/sevelebeci/.local/bin/sockseek"),
