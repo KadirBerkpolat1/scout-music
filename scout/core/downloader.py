@@ -56,12 +56,14 @@ class AudioDownloader:
         clean_title = sanitize_filename(track.title or "Unknown Title")
         track_num = track.track_num or 1
 
-        # When target_dir is specified (e.g. Playlist or Discovery directory) or flat=True, store tracks cleanly without nested folder clutter
-        if flat or (target_dir and target_dir != self.config.general.music_dir):
+        if flat or (target_dir and target_dir == self.config.general.discovery_dir):
+            full_path = base_dir / f"{clean_artist} - {clean_title}.{ext}"
+        elif target_dir and target_dir != self.config.general.music_dir:
+            # Inside a dedicated playlist directory, organize by artist: <PlaylistDir>/<Artist>/<track_num> - <title>.<ext>
             if track_num and track_num > 0:
-                full_path = base_dir / f"{track_num:02d} - {clean_artist} - {clean_title}.{ext}"
+                full_path = base_dir / clean_artist / f"{track_num:02d} - {clean_title}.{ext}"
             else:
-                full_path = base_dir / f"{clean_artist} - {clean_title}.{ext}"
+                full_path = base_dir / clean_artist / f"{clean_title}.{ext}"
         else:
             template = self.config.general.folder_template
             relative_path_str = template.format(
