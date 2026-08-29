@@ -324,14 +324,27 @@ class AudioDownloader:
                 pass
 
         # 2. Fallback to YouTube Music studio audio extraction via yt-dlp
-        if not track.video_id and not track.source_url:
+        source_url = ""
+        if track.video_id:
+            source_url = f"https://www.youtube.com/watch?v={track.video_id}"
+        elif track.source_url and not ("spotify.com" in track.source_url or "spotify.link" in track.source_url):
+            source_url = track.source_url
+        else:
+            from scout.providers.ytmusic import YTMusicProvider
+            ytm = YTMusicProvider()
+            matched = ytm.search_track(track.artist, track.title, album=track.album)
+            if matched and matched.video_id:
+                track.video_id = matched.video_id
+                source_url = f"https://www.youtube.com/watch?v={matched.video_id}"
+                if not track.cover_url and matched.cover_url:
+                    track.cover_url = matched.cover_url
+
+        if not source_url:
             return DownloadResult(
                 success=False,
                 track=track,
-                error="No video_id or source_url provided for track",
+                error="No valid YouTube stream or audio source resolved for track",
             )
-
-        source_url = track.source_url or f"https://www.youtube.com/watch?v={track.video_id}"
         audio_format = self.config.general.audio_format.lower()
         bitrate = self.config.general.bitrate.replace("k", "")
         # Prepare yt-dlp options
