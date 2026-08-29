@@ -47,7 +47,7 @@ class AudioDownloader:
         self.history = history_store or HistoryStore()
         self.qobuz = qobuz_provider or QobuzFlacProvider()
         self.soulseek = soulseek_provider or SoulseekFlacProvider(config=self.config.soulseek)
-    def resolve_destination_path(self, track: Track, target_dir: Optional[Path] = None) -> Path:
+    def resolve_destination_path(self, track: Track, target_dir: Optional[Path] = None, flat: bool = False) -> Path:
         base_dir = target_dir or self.config.general.music_dir
         ext = self.config.general.audio_format.lower()
 
@@ -56,8 +56,12 @@ class AudioDownloader:
         clean_title = sanitize_filename(track.title or "Unknown Title")
         track_num = track.track_num or 1
 
-        if target_dir and target_dir == self.config.general.discovery_dir:
-            full_path = base_dir / f"{clean_artist} - {clean_title}.{ext}"
+        # When target_dir is specified (e.g. Playlist or Discovery directory) or flat=True, store tracks cleanly without nested folder clutter
+        if flat or (target_dir and target_dir != self.config.general.music_dir):
+            if track_num and track_num > 0:
+                full_path = base_dir / f"{track_num:02d} - {clean_artist} - {clean_title}.{ext}"
+            else:
+                full_path = base_dir / f"{clean_artist} - {clean_title}.{ext}"
         else:
             template = self.config.general.folder_template
             relative_path_str = template.format(

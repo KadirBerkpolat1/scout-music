@@ -255,9 +255,6 @@ def cmd_playlist(args, config: Config):
     spotify = SpotifyProvider()
     ytm = YTMusicProvider()
     scanner = NavidromeScanner(config=config.navidrome)
-
-    target_dir = Path(args.dir) if args.dir else config.general.music_dir
-
     playlist_obj: Optional[Playlist] = None
 
     if SpotifyProvider.is_spotify_url(args.query):
@@ -268,6 +265,17 @@ def cmd_playlist(args, config: Config):
         console.print("[red]❌ Could not find or parse Spotify playlist.[/red]")
         sys.exit(1)
 
+    from scout.core.downloader import sanitize_filename
+    safe_name = sanitize_filename(playlist_obj.title) or "Spotify Playlist"
+
+    # Default to dedicated playlist folder ~/Music/Playlists/<PlaylistName>/ to prevent music folder pollution
+    if args.dir:
+        target_dir = Path(args.dir)
+    else:
+        target_dir = config.general.music_dir / "Playlists" / safe_name
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     console.print(Panel(
         f"[bold cyan]Playlist:[/bold cyan] {playlist_obj.title}\n"
         f"[bold cyan]Description:[/bold cyan] {playlist_obj.description or 'N/A'}\n"
@@ -276,7 +284,6 @@ def cmd_playlist(args, config: Config):
         title="🎵 Spotify Playlist Details",
         border_style="cyan"
     ))
-
     force = getattr(args, "force", False)
     processed_count = 0
     downloaded_paths: list[tuple[Track, Path]] = []
@@ -326,9 +333,7 @@ def cmd_playlist(args, config: Config):
     # Generate .m3u8 playlist file if requested
     no_m3u = getattr(args, "no_m3u", False)
     if not no_m3u and downloaded_paths:
-        from scout.core.downloader import sanitize_filename
-        safe_name = sanitize_filename(playlist_obj.title) or "Spotify Playlist"
-        playlists_dir = target_dir / "Playlists" if target_dir != config.general.music_dir else config.general.music_dir / "Playlists"
+        playlists_dir = config.general.music_dir / "Playlists"
         playlists_dir.mkdir(parents=True, exist_ok=True)
         m3u8_path = playlists_dir / f"{safe_name}.m3u8"
 
@@ -340,7 +345,6 @@ def cmd_playlist(args, config: Config):
                 f.write(f"{pth.resolve()}\n")
 
         console.print(f"[bold cyan]📄 Created Playlist File:[/bold cyan] {m3u8_path}")
-
     if config.navidrome.scan_on_download:
         scanner.trigger_scan()
     notify("🎵 Playlist Download Complete", f"{playlist_obj.title} ({processed_count} tracks)")
