@@ -49,15 +49,19 @@ class SoulseekFlacProvider:
 
         for a in artists[:2]:
             clean_a = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", a).strip()
+            clean_a = re.sub(r"\s+", " ", clean_a).strip()
             for t in titles:
                 clean_t = re.sub(r"[^a-zA-Z0-9\s\u0080-\uffff]", " ", t).strip()
+                clean_t = re.sub(r"\s+", " ", clean_t).strip()
                 if clean_a and clean_t:
-                    q = f"{clean_a} {clean_t}"
-                    q = re.sub(r"\s+", " ", q).strip()
-                    if q and q not in queries:
-                        queries.append(q)
+                    q_hyphen = f"{clean_a} - {clean_t}"
+                    if q_hyphen not in queries:
+                        queries.append(q_hyphen)
+                    q_plain = f"{clean_a} {clean_t}"
+                    if q_plain not in queries:
+                        queries.append(q_plain)
 
-        return queries or [self.clean_search_query(artist, title)]
+        return queries or [f"{artist} - {title}"]
 
     def download_flac(
         self,
@@ -80,9 +84,10 @@ class SoulseekFlacProvider:
 
             for q in queries_to_try:
                 cmd = [
-                    exe,
                     q,
                     "--song",
+                    "--extract-artist",
+                    "-d",
                     "--no-listen",
                     "--user", self.config.username,
                     "--pass", self.config.password,

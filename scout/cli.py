@@ -579,6 +579,11 @@ def cmd_stats(args, config: Config):
             table.add_row(str(idx), r["artist"], r["title"], r.get("album") or "Single", r.get("audio_format", "mp3"), str(r.get("date_added", ""))[:19])
 
 def cmd_upgrade(args, config: Config):
+    import concurrent.futures
+    import threading
+    import shutil
+    from mutagen.mp3 import MP3
+
     render_banner()
     downloader = AudioDownloader(config=config)
     scanner = NavidromeScanner(config=config.navidrome)
@@ -588,81 +593,108 @@ def cmd_upgrade(args, config: Config):
     mp3_files = list(target_dir.rglob("*.mp3"))
 
     if not mp3_files:
-        console.print("[yellow]No MP3 files found in music library to upgrade.[/yellow]")
+        console.print("[yellow]Kütüphanede yükseltilecek MP3 dosyası bulunamadı.[/yellow]")
         return
 
-    console.print(f"[bold cyan]🔍 Found {len(mp3_files)} MP3 files in library. Starting Soulseek Lossless FLAC upgrade...[/bold cyan]\n")
+    concurrency = getattr(args, "concurrency", 3) or 3
+    concurrency = max(1, min(6, concurrency))
+
+    console.print(f"[bold cyan]🔍 Kütüphanede {len(mp3_files)} MP3 bulundu. Soulseek Eşzamanlı ({concurrency} Kanal) FLAC Yükseltmesi Başlatılıyor...[/bold cyan]\n")
 
     upgraded_count = 0
     kept_count = 0
+    lock = threading.Lock()
+
+    track_items = []
+    for mp3_path in mp3_files:
+        artist, title, album = "", "", ""
+        try:
+            audio = MP3(mp3_path)
+            if audio.tags:
+                title = str(audio.tags.get("TIT2", ""))
+                artist = str(audio.tags.get("TPE1", ""))
+                album = str(audio.tags.get("TALB", ""))
+        except Exception:
+            pass
+
+        if not artist or not title:
+            stem = mp3_path.stem
+            if " - " in stem:
+                parts = stem.split(" - ", 1)
+                artist, title = parts[0].strip(), parts[1].strip()
+            else:
+                artist = mp3_path.parent.name
+                title = stem
+
+        track = Track(artist=artist, title=title, album=album or "Single")
+        track_items.append((mp3_path, track))
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
         console=console,
     ) as progress:
-        main_task = progress.add_task(f"Upgrading library to FLAC ({len(mp3_files)} tracks)", total=len(mp3_files))
+        overall_task = progress.add_task(f"[bold green]Genel İlerleme (Toplam {len(track_items)} Parça)[/bold green]", total=len(track_items))
 
-        for idx, mp3_path in enumerate(mp3_files, 1):
-            artist = ""
-            title = ""
-            album = ""
-            try:
-                from mutagen.mp3 import MP3
-                audio = MP3(mp3_path)
-                if audio.tags:
-                    title = str(audio.tags.get("TIT2", ""))
-                    artist = str(audio.tags.get("TPE1", ""))
-                    album = str(audio.tags.get("TALB", ""))
-            except Exception:
-                pass
+        def process_track(item):
+            nonlocal upgraded_count, kept_count
+            mp3_path, track = item
+            display = f"{track.artist} - {track.title}"
 
-            if not artist or not title:
-                stem = mp3_path.stem
-                if " - " in stem:
-                    parts = stem.split(" - ", 1)
-                    artist, title = parts[0].strip(), parts[1].strip()
-                else:
-                    artist = mp3_path.parent.name
-                    title = stem
-
-            track = Track(artist=artist, title=title, album=album or "Single")
-            progress.update(main_task, description=f"[{idx}/{len(mp3_files)}] Soulseek FLAC: {artist} - {title}")
+            worker_task = progress.add_task(f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [yellow]🔍 Aranıyor...[/yellow]", total=100, completed=15)
 
             try:
+                progress.update(worker_task, completed=40, description=f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [blue]⬇ FLAC İndiriliyor...[/blue]")
                 tmp_flac = downloader.soulseek.download_flac(track)
+
                 if tmp_flac and tmp_flac.exists() and tmp_flac.stat().st_size > 1024 * 1024:
+                    size_mb = tmp_flac.stat().st_size / (1024 * 1024)
+                    progress.update(worker_task, completed=90, description=f"  [dim]•[/dim] [cyan]{display[:36]}[/cyan] [magenta]🏷️ Etiketleniyor...[/magenta]")
                     flac_dest = mp3_path.with_suffix(".flac")
                     downloader.tag_file(tmp_flac, track, None)
-                    import shutil
                     flac_dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(tmp_flac), str(flac_dest))
+
                     if flac_dest.exists() and flac_dest.stat().st_size > 1024 * 1024:
                         mp3_path.unlink(missing_ok=True)
-                        history.record_download(
-                            track=track,
-                            file_path=flac_dest,
-                            source_url="soulseek://p2p",
-                            audio_format="flac",
-                            bitrate="Lossless FLAC",
-                        )
-                        upgraded_count += 1
+                        with lock:
+                            history.record_download(
+                                track=track,
+                                file_path=flac_dest,
+                                source_url="soulseek://p2p",
+                                audio_format="flac",
+                                bitrate="Lossless FLAC",
+                            )
+                            upgraded_count += 1
+                        progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [green]✔ Yükseltildi:[/green] [cyan]{display[:32]}[/cyan] [dim]({size_mb:.1f} MB)[/dim]")
                 else:
-                    kept_count += 1
+                    with lock:
+                        kept_count += 1
+                    progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:32]}[/dim]")
             except Exception:
-                kept_count += 1
+                with lock:
+                    kept_count += 1
+                progress.update(worker_task, completed=100, description=f"  [dim]•[/dim] [yellow]ℹ MP3 Korundu:[/yellow] [dim]{display[:32]}[/dim]")
+            finally:
+                with lock:
+                    progress.advance(overall_task)
+                time.sleep(1.0)
+                progress.remove_task(worker_task)
 
-            progress.advance(main_task)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+            list(executor.map(process_track, track_items))
 
-    console.print(f"\n[bold green]✔ Library Upgrade Complete![/bold green]")
-    console.print(f"  • Upgraded to True Lossless FLAC: [bold cyan]{upgraded_count}[/bold cyan]")
-    console.print(f"  • Kept as MP3 (not available on network): [bold yellow]{kept_count}[/bold yellow]")
+    console.print(f"\n[bold green]✔ Kütüphane FLAC Yükseltmesi Tamamlandı![/bold green]")
+    console.print(f"  • Orijinal FLAC'e Yükseltilen: [bold cyan]{upgraded_count}[/bold cyan]")
+    console.print(f"  • Korunan MP3 (Ağda bulunmayan): [bold yellow]{kept_count}[/bold yellow]")
 
     if config.navidrome.scan_on_download:
         scanner.trigger_scan()
     notify("✨ Scout FLAC Upgrade Complete", f"Upgraded {upgraded_count} tracks to lossless FLAC!")
+
 
 def cmd_watch(args, config: Config):
     render_banner()
@@ -756,6 +788,7 @@ def main():
     p_watch.add_argument("--interval", type=int, default=30, help="Check interval in seconds")
     p_upgrade = subparsers.add_parser("upgrade", help="Batch upgrade existing MP3 tracks in library to Soulseek Lossless FLAC")
     p_upgrade.add_argument("--dir", help="Custom target directory to scan")
+    p_upgrade.add_argument("-c", "--concurrency", type=int, default=3, help="Number of concurrent download channels (default: 3)")
 
     # stats
     subparsers.add_parser("stats", help="View archive statistics and recent downloads")
