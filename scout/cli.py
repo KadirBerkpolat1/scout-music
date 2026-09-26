@@ -912,6 +912,7 @@ def cmd_del(args, config: Config):
     dl = AudioDownloader(config=config)
 
     target_track = None
+    advanced_to = None
     file_to_delete = None
 
     if args.query:
@@ -937,14 +938,12 @@ def cmd_del(args, config: Config):
             notify("🗑 Parça silinemedi", "Oynatıcıdan parça bilgisi alınamadı")
             return
 
-        try:
-            import subprocess
-            subprocess.run([
-                "dbus-send", "--session", f"--dest={active_player}",
-                "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player.Next"
-            ], capture_output=True, timeout=2)
-        except Exception:
-            pass
+        # Next'i at ve gerçekten ilerlediğini doğrula: MPRIS çağrısı başarılı
+        # dönse de oynatıcı stream'lerde ve tek parçalık kuyrukta no-op yapabiliyor.
+        current_key = target_track.display_name
+        advanced_to = None
+        if connector.next_track(active_player):
+            advanced_to = connector.wait_for_track_change(current_key, timeout=3.0)
 
         file_to_delete = dl.is_track_already_present(target_track)
         if not file_to_delete:
@@ -977,11 +976,6 @@ def cmd_del(args, config: Config):
         if history.remove_download(target_track.artist, target_track.title):
             console.print("[dim]Geçmiş kaydı temizlendi (hayalet satır kalmadı).[/dim]")
 
-    navidrome_note = ""
-    if file_to_delete is not None and file_to_delete.exists() is False:
-        purged = purge_from_navidrome(config)
-        navidrome_note = "Navidrome'dan silindi" if purged else "Navidrome temizlenemedi (sunucu kapalı?)"
-
     if deleted_str == "Diskte dosya bulunamadı":
         console.print(f"[yellow]⚠ {disp_name} kütüphanede bulunamadı, silinecek bir şey yok.[/yellow]")
         notify("🗑 Bulunamadı", f"{disp_name} kütüphanede yok")
@@ -989,9 +983,24 @@ def cmd_del(args, config: Config):
 
     console.print(f"[bold red]🗑 Silindi ve Kara Listeye Alındı:[/bold red] {disp_name}")
     console.print(f"[dim]Dosya: {deleted_str}[/dim]")
-    if navidrome_note:
+
+    # Navidrome taraması 60 saniyeye kadar sürebilir; bildirimi ondan ÖNCE gönder,
+    # yoksa kısayola basıp saniyelerce sessizlik hissedilir.
+    if advanced_to:
+        console.print(f"[green]▶ Sonraki parçaya geçildi:[/green] {advanced_to}")
+        notify("🗑 Parça silindi", f"{disp_name} → {advanced_to}")
+    elif args.query is None:
+        console.print(
+            "[yellow]⚠ Oynatıcı ilerlemedi — kuyrukta tek parça var ya da oynatıcı duraklatılmış.[/yellow]"
+        )
+        notify("🗑 Silindi, ilerlemedi", disp_name)
+    else:
+        notify("🗑 Parça silindi", disp_name)
+
+    if file_to_delete is not None and file_to_delete.exists() is False:
+        purged = purge_from_navidrome(config)
+        navidrome_note = "Navidrome'dan silindi" if purged else "Navidrome temizlenemedi (sunucu kapalı?)"
         console.print(f"[dim]Navidrome: {navidrome_note}[/dim]")
-    notify("🗑 Parça silindi", f"{disp_name} — {navidrome_note or 'diskten kaldırıldı'}")
 
 
 def main():

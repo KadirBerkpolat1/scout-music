@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+import time
 from typing import Optional
 
 from scout.core.models import Track
@@ -146,6 +147,45 @@ class MPRISConnector:
             )
         except Exception:
             return None
+
+    def next_track(self, player_service: str) -> bool:
+        """Ask the player to advance. Returns True if the call was accepted.
+
+        A successful return only means the player *accepted* the request; it does
+        not guarantee the track actually changed (some players no-op on streams
+        or a single-item queue). Use wait_for_track_change to confirm.
+        """
+        try:
+            res = subprocess.run(
+                [
+                    "dbus-send",
+                    "--session",
+                    f"--dest={player_service}",
+                    "--type=method_call",
+                    "--print-reply",
+                    "/org/mpris/MediaPlayer2",
+                    "org.mpris.MediaPlayer2.Player.Next",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
+
+    def wait_for_track_change(self, previous_key: str, timeout: float = 3.0) -> Optional[str]:
+        """Poll Metadata until it differs from previous_key.
+
+        Returns the new "artist - title" key, or None if the player never moved.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.4)
+            track = self.get_current_track()
+            if track and track.display_name != previous_key:
+                return track.display_name
+        return None
 
 
 def get_current_playing_track() -> Optional[Track]:
