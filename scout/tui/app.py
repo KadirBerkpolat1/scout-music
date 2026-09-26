@@ -60,7 +60,6 @@ class ScoutApp(App):
     }
 
     .section-title {
-        font-size: 100%;
         text-style: bold;
         color: #58a6ff;
         margin-bottom: 1;
@@ -119,7 +118,6 @@ class ScoutApp(App):
     .stat-number {
         text-style: bold;
         color: #58a6ff;
-        font-size: 140%;
     }
 
     .stat-label {

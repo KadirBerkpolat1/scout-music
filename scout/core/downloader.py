@@ -28,6 +28,22 @@ from scout.core.dedupe import HistoryStore
 from scout.core.models import DownloadResult, Track
 from scout.providers.qobuz import QobuzFlacProvider
 from scout.providers.soulseek import SoulseekFlacProvider
+
+
+def _artist_tokens(artist: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9ğüşıöç]+", artist.lower()) if len(t) > 1}
+
+
+def _artist_matches(expected: str, resolved: str) -> bool:
+    """True when expected and resolved artist share a meaningful token."""
+    if not resolved:
+        return True
+    exp, res = _artist_tokens(expected), _artist_tokens(resolved)
+    if not exp:
+        return True
+    return bool(exp & res)
+
+
 def sanitize_filename(name: str) -> str:
     """Clean filename of illegal characters across Linux, macOS, and Windows."""
     clean = re.sub(r'[\\/*?:"<>|]', "", name)
@@ -47,6 +63,16 @@ class AudioDownloader:
         self.history = history_store or HistoryStore()
         self.qobuz = qobuz_provider or QobuzFlacProvider()
         self.soulseek = soulseek_provider or SoulseekFlacProvider(config=self.config.soulseek)
+    def attach_youtube_match(self, track: Track, matched: Optional[Track]) -> bool:
+        """Bind a YouTube Music match to a track. Refuses a match by a different artist."""
+        if not matched or not matched.video_id:
+            return False
+        if track.artist and not _artist_matches(track.artist, matched.artist or ""):
+            return False
+        track.video_id = matched.video_id
+        if not track.cover_url and matched.cover_url:
+            track.cover_url = matched.cover_url
+        return True
     def resolve_destination_path(self, track: Track, target_dir: Optional[Path] = None, flat: bool = False) -> Path:
         base_dir = target_dir or self.config.general.music_dir
         ext = self.config.general.audio_format.lower()
@@ -74,7 +100,6 @@ class AudioDownloader:
             )
             full_path = base_dir / f"{relative_path_str}.{ext}"
 
-        full_path.parent.mkdir(parents=True, exist_ok=True)
         return full_path
     def is_track_already_present(self, track: Track, target_dir: Optional[Path] = None) -> Optional[Path]:
         """
@@ -329,8 +354,16 @@ class AudioDownloader:
             except Exception:
                 pass
 
+        if self.config.general.strict_lossless:
+            return DownloadResult(
+                success=False,
+                track=track,
+                error="Saf kayıpsız FLAC bulunamadı (strict_lossless aktif; kayıplı YouTube transcode engellendi)",
+            )
         # 2. Fallback to YouTube Music studio audio extraction via yt-dlp
         source_url = ""
+        expected_artist = track.artist or ""
+        resolved_artist = ""
         if track.video_id:
             source_url = f"https://www.youtube.com/watch?v={track.video_id}"
         elif track.source_url and not ("spotify.com" in track.source_url or "spotify.link" in track.source_url):
@@ -339,11 +372,22 @@ class AudioDownloader:
             from scout.providers.ytmusic import YTMusicProvider
             ytm = YTMusicProvider()
             matched = ytm.search_track(track.artist, track.title, album=track.album)
-            if matched and matched.video_id:
-                track.video_id = matched.video_id
+            if self.attach_youtube_match(track, matched):
+                resolved_artist = matched.artist or ""
                 source_url = f"https://www.youtube.com/watch?v={matched.video_id}"
-                if not track.cover_url and matched.cover_url:
-                    track.cover_url = matched.cover_url
+
+
+
+        # 3. Refuse a lossy fallback that resolves to a different artist
+        if expected_artist and not _artist_matches(expected_artist, resolved_artist):
+            return DownloadResult(
+                success=False,
+                track=track,
+                error=(
+                    f"'{track.title}' icin kayipsiz FLAC yok ve YouTube eslesmesi farkli bir sanatciya "
+                    f"ait ({resolved_artist or 'bilinmiyor'}). Yanlis parca indirilmedi."
+                ),
+            )
 
         if not source_url:
             return DownloadResult(

@@ -54,7 +54,7 @@ class NavidromeScanner:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            music_dir = Path.home() / "Müzik"
+            music_dir = load_config().general.music_dir
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM annotation a
@@ -94,7 +94,7 @@ class NavidromeScanner:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            music_dir = Path.home() / "Müzik"
+            music_dir = load_config().general.music_dir
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM annotation a
@@ -134,7 +134,7 @@ class NavidromeScanner:
             conn = sqlite3.connect(f"file:{target_db}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            music_dir = Path.home() / "Müzik"
+            music_dir = load_config().general.music_dir
             query = """
                 SELECT mf.title, mf.artist, mf.album, mf.year, mf.duration, mf.track_number, mf.path
                 FROM media_file mf

@@ -207,6 +207,20 @@ class HistoryStore:
                 f"SELECT 1 FROM downloaded_tracks WHERE clean_key IN ({placeholders})", keys
             )
             return cursor.fetchone() is not None
+
+    def remove_download(self, artist: str, title: str) -> bool:
+        """Drop the recorded download so a deleted track leaves no ghost entry."""
+        keys = list(get_track_keys(artist, title))
+        if not keys:
+            return False
+        placeholders = ",".join("?" * len(keys))
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM downloaded_tracks WHERE clean_key IN ({placeholders})", keys
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def record_download(
         self,
         track: Track,

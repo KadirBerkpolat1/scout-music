@@ -112,7 +112,7 @@ class SoulseekFlacProvider:
                 ]
 
                 if self.config.strict_flac:
-                    cmd.extend(["--pref-format", "flac"])
+                    cmd.extend(["--format", "flac", "--pref-format", "flac"])
 
                 try:
                     import time

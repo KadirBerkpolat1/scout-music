@@ -205,6 +205,8 @@ def cmd_album(args, config: Config):
 
     force = getattr(args, "force", False)
     success_count = 0
+    failures: list[tuple[Track, str]] = []
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -227,10 +229,8 @@ def cmd_album(args, config: Config):
             # Ensure video_id is resolved
             if not t.video_id:
                 matched = ytm.search_track(t.artist, t.title, album=album_obj.title)
-                if matched and matched.video_id:
-                    t.video_id = matched.video_id
-                    if not t.cover_url and matched.cover_url:
-                        t.cover_url = matched.cover_url
+                downloader.attach_youtube_match(t, matched)
+
 
             if album_obj.cover_url and not t.cover_url:
                 t.cover_url = album_obj.cover_url
@@ -241,9 +241,15 @@ def cmd_album(args, config: Config):
             res = downloader.download_track(t, target_dir=target_dir, overwrite=force)
             if res.success:
                 success_count += 1
+            else:
+                failures.append((t, res.error or "bilinmeyen hata"))
+
             progress.advance(main_task)
 
     console.print(f"[bold green]✔ Successfully processed {success_count}/{len(album_obj.tracks)} tracks![/bold green]")
+    for t, err in failures:
+        console.print(f"  [red]✗[/red] {t.display_name} — {err}")
+
     if config.navidrome.scan_on_download:
         scanner.trigger_scan()
     notify("💿 Album Download Complete", f"{album_obj.artist} - {album_obj.title} ({success_count} tracks)")
@@ -287,6 +293,8 @@ def cmd_playlist(args, config: Config):
     force = getattr(args, "force", False)
     processed_count = 0
     downloaded_paths: list[tuple[Track, Path]] = []
+    failures: list[tuple[Track, str]] = []
+
 
     with Progress(
         SpinnerColumn(),
@@ -313,10 +321,7 @@ def cmd_playlist(args, config: Config):
             # Ensure video_id is resolved
             if not t.video_id:
                 matched = ytm.search_track(t.artist, t.title)
-                if matched and matched.video_id:
-                    t.video_id = matched.video_id
-                    if not t.cover_url and matched.cover_url:
-                        t.cover_url = matched.cover_url
+                if downloader.attach_youtube_match(t, matched):
                     if matched.album and matched.album != "Single" and (not t.album or t.album == "Single"):
                         t.album = matched.album
                     if matched.year and not t.year:
@@ -326,9 +331,14 @@ def cmd_playlist(args, config: Config):
             if res.success and res.file_path:
                 processed_count += 1
                 downloaded_paths.append((t, res.file_path))
+            else:
+                failures.append((t, res.error or "bilinmeyen hata"))
             progress.advance(main_task)
 
+
     console.print(f"[bold green]✔ Successfully processed {processed_count}/{len(playlist_obj.tracks)} tracks![/bold green]")
+    for t, err in failures:
+        console.print(f"  [red]✗[/red] {t.display_name} — {err}")
 
     # Generate .m3u8 playlist file if requested
     no_m3u = getattr(args, "no_m3u", False)
@@ -866,6 +876,123 @@ def cmd_tui(args, config: Config):
     app = ScoutApp()
     app.run()
 
+def purge_from_navidrome(config) -> bool:
+    """Rescan Navidrome and wait for it to finish, so the deleted file leaves no ghost row."""
+    import time
+    import requests
+
+    sub = config.subsonic
+    base = sub.url.rstrip("/")
+    params = {"u": sub.username, "p": sub.password, "v": "1.16.1", "c": "scout", "f": "json"}
+
+    try:
+        requests.get(f"{base}/rest/startScan.view", params=params, timeout=10).raise_for_status()
+    except Exception:
+        return False
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            data = requests.get(f"{base}/rest/getScanStatus.view", params=params, timeout=10).json()
+        except Exception:
+            return False
+        scan = data.get("subsonic-response", {}).get("scanStatus", {})
+        if not scan.get("scanning"):
+            return True
+        time.sleep(1)
+    return False
+
+
+def cmd_del(args, config: Config):
+    from scout.core.dedupe import HistoryStore, get_track_keys
+    from scout.core.downloader import AudioDownloader
+    from scout.integrations.mpris import MPRISConnector
+    history = HistoryStore()
+    connector = MPRISConnector()
+    dl = AudioDownloader(config=config)
+
+    target_track = None
+    file_to_delete = None
+
+    if args.query:
+        parts = args.query.split(" - ", 1) if " - " in args.query else ("", args.query)
+        target_track = Track(artist=parts[0].strip(), title=parts[1].strip(), album="")
+        file_to_delete = dl.is_track_already_present(target_track)
+        if not file_to_delete:
+            for f in config.general.music_dir.rglob("*.flac"):
+                if args.query.lower() in f.name.lower():
+                    file_to_delete = f
+                    target_track = Track(artist="", title=f.stem)
+                    break
+    else:
+        active_player = connector.get_active_player()
+        if not active_player:
+            console.print("[yellow]⚠ Aktif çalan bir müzik oynatıcısı (Feishin/Spotify vb.) bulunamadı.[/yellow]")
+            notify("🗑 Parça silinemedi", "Çalan bir müzik oynatıcısı bulunamadı")
+            return
+
+        target_track = connector.get_current_track()
+        if not target_track:
+            console.print("[yellow]⚠ Oynatıcıdan parça bilgisi alınamadı.[/yellow]")
+            notify("🗑 Parça silinemedi", "Oynatıcıdan parça bilgisi alınamadı")
+            return
+
+        try:
+            import subprocess
+            subprocess.run([
+                "dbus-send", "--session", f"--dest={active_player}",
+                "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player.Next"
+            ], capture_output=True, timeout=2)
+        except Exception:
+            pass
+
+        file_to_delete = dl.is_track_already_present(target_track)
+        if not file_to_delete:
+            t_keys = target_track.clean_keys
+            for f in config.general.music_dir.rglob("*.flac"):
+                f_keys = get_track_keys("", f.stem)
+                if t_keys & f_keys:
+                    file_to_delete = f
+                    break
+
+    deleted_str = "Diskte dosya bulunamadı"
+    if file_to_delete and file_to_delete.exists():
+        try:
+            file_to_delete.unlink()
+            deleted_str = str(file_to_delete)
+            parent = file_to_delete.parent
+            while parent != config.general.music_dir and parent.is_dir():
+                if any(parent.iterdir()):
+                    break
+                parent.rmdir()
+                parent = parent.parent
+        except Exception as e:
+            console.print(f"[red]❌ Dosya silinemedi: {e}[/red]")
+            return
+
+    disp_name = target_track.display_name if target_track else (args.query or "Parça")
+
+    if target_track:
+        history.blacklist(target_track.artist, target_track.title, reason="manual_deletion")
+        if history.remove_download(target_track.artist, target_track.title):
+            console.print("[dim]Geçmiş kaydı temizlendi (hayalet satır kalmadı).[/dim]")
+
+    navidrome_note = ""
+    if file_to_delete is not None and file_to_delete.exists() is False:
+        purged = purge_from_navidrome(config)
+        navidrome_note = "Navidrome'dan silindi" if purged else "Navidrome temizlenemedi (sunucu kapalı?)"
+
+    if deleted_str == "Diskte dosya bulunamadı":
+        console.print(f"[yellow]⚠ {disp_name} kütüphanede bulunamadı, silinecek bir şey yok.[/yellow]")
+        notify("🗑 Bulunamadı", f"{disp_name} kütüphanede yok")
+        return
+
+    console.print(f"[bold red]🗑 Silindi ve Kara Listeye Alındı:[/bold red] {disp_name}")
+    console.print(f"[dim]Dosya: {deleted_str}[/dim]")
+    if navidrome_note:
+        console.print(f"[dim]Navidrome: {navidrome_note}[/dim]")
+    notify("🗑 Parça silindi", f"{disp_name} — {navidrome_note or 'diskten kaldırıldı'}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -880,12 +1007,14 @@ def main():
     p_add.add_argument("--dir", help="Custom target directory")
     p_add.add_argument("-y", "--yes", action="store_true", help="Auto-select top match without interactive prompt")
     p_add.add_argument("-f", "--force", action="store_true", help="Force overwrite even if track exists")
+    p_add.add_argument("--pure-flac", action="store_true", help="Require bit-perfect lossless FLAC from Soulseek/Qobuz; disallow lossy transcode fallback")
 
     # album
     p_album = subparsers.add_parser("album", help="Download complete album into {Artist}/{Album}/")
     p_album.add_argument("query", help="Album URL or 'Artist - Album'")
     p_album.add_argument("--dir", help="Custom target directory")
     p_album.add_argument("-f", "--force", action="store_true", help="Force re-download existing album tracks")
+    p_album.add_argument("--pure-flac", action="store_true", help="Require bit-perfect lossless FLAC from Soulseek/Qobuz; disallow lossy transcode fallback")
 
 
     # playlist
@@ -894,6 +1023,7 @@ def main():
     p_playlist.add_argument("--dir", help="Custom target directory")
     p_playlist.add_argument("-f", "--force", action="store_true", help="Force re-download existing playlist tracks")
     p_playlist.add_argument("--no-m3u", action="store_true", help="Skip generating .m3u8 playlist file")
+    p_playlist.add_argument("--pure-flac", action="store_true", help="Require bit-perfect lossless FLAC from Soulseek/Qobuz; disallow lossy transcode fallback")
     # artist
     p_artist = subparsers.add_parser("artist", help="List and download artist discography albums")
     p_artist.add_argument("artist", help="Artist Name")
@@ -933,8 +1063,14 @@ def main():
     # tui
     subparsers.add_parser("tui", help="Launch interactive full-screen Terminal User Interface (TUI)")
 
+    # del / delete
+    p_del = subparsers.add_parser("del", aliases=["delete", "rm"], help="Delete playing or specified song from disk and add to blacklist")
+    p_del.add_argument("query", nargs="?", default=None, help="Optional track to delete ('Artist - Title'). If empty, deletes currently playing track via MPRIS")
+
     args = parser.parse_args()
     config = load_config()
+    if getattr(args, "pure_flac", False):
+        config.general.strict_lossless = True
 
     if args.command is None:
         # Default behavior: run instant discovery mix based on active favorites!
@@ -969,7 +1105,8 @@ def main():
         cmd_tui(args, config)
     elif args.command == "upgrade":
         cmd_upgrade(args, config)
-
+    elif args.command in ("del", "delete", "rm"):
+        cmd_del(args, config)
 
 if __name__ == "__main__":
     main()

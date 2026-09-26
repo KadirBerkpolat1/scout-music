@@ -45,6 +45,7 @@ class GeneralConfig:
     bitrate: str = "320k"
     folder_template: str = "{artist}/{album}/{track_num:02d} - {title}"
     lossless_first: bool = False  # Try Qobuz/Lossless FLAC before YouTube Music Studio
+    strict_lossless: bool = False  # Strictly require pure lossless FLAC; disallow lossy transcode fallback
     def __post_init__(self):
         if isinstance(self.music_dir, str):
             self.music_dir = Path(os.path.expanduser(self.music_dir))
@@ -123,6 +124,7 @@ class Config:
                 bitrate=gen_data.get("bitrate", "320k"),
                 folder_template=gen_data.get("folder_template", "{artist}/{album}/{track_num:02d} - {title}"),
                 lossless_first=gen_data.get("lossless_first", False),
+                strict_lossless=gen_data.get("strict_lossless", False),
             )
 
             lfm_data = data.get("lastfm", {})

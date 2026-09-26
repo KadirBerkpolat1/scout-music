@@ -50,6 +50,26 @@ class SpotifyProvider:
             pass
         return None
 
+    def fetch_page_artist(self, url: str) -> str:
+        """Artist from the main page og:description, for releases whose embed omits it."""
+        try:
+            resp = requests.get(
+                url,
+                headers={"User-Agent": "Twitterbot/1.0", "Accept-Language": "en-US,en;q=0.9"},
+                timeout=12,
+            )
+            html = resp.text if resp.status_code == 200 else ""
+        except Exception:
+            html = ""
+        if not html:
+            return ""
+        og_desc = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+        if not og_desc:
+            return ""
+        first = og_desc.group(1).split("·")[0].strip()
+        return "" if first.lower() in ("", "spotify") else first
+
+
     def get_track(self, url: str) -> Optional[Track]:
         entity_type, item_id = self.parse_url_type(url)
         if entity_type != "track" and not entity_type:
@@ -62,7 +82,10 @@ class SpotifyProvider:
             if embed_html:
                 track = self._parse_track_embed(embed_html, item_id)
                 if track:
+                    if not track.artist:
+                        track.artist = track.album_artist = self.fetch_page_artist(url)
                     return track
+
 
         # 2. Try main page
         html = self.fetch_page_content(url)
@@ -190,6 +213,13 @@ class SpotifyProvider:
             if embed_html:
                 album = self._parse_album_embed(embed_html, item_id)
                 if album:
+                    if not album.artist:
+                        album.artist = self.fetch_page_artist(url)
+                        for t in album.tracks:
+                            if not t.artist:
+                                t.artist = album.artist
+                            if not t.album_artist:
+                                t.album_artist = album.artist
                     return album
 
         # Fallback to main page
